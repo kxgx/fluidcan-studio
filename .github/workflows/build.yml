@@ -400,6 +400,8 @@ jobs:
           PY
         env:
           VERSION: ${{ github.ref_name }}
+      - name: 准备 Gradle wrapper
+        run: chmod +x gen/android/gradlew
       - name: 编译 Android APK
         run: npx tauri android build --apk --target aarch64 --split-per-abi
       - name: 签名 APK（测试签名）
