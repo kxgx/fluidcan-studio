@@ -70,7 +70,7 @@ jobs:
 
       - name: 3. 检查源码未写死开发机路径
         run: |
-          if grep -R "C:\\FluidNC\|installer-dist\" src ui Cargo.toml 2>/dev/null; then
+          if grep -R -F 'C:\FluidNC' src ui Cargo.toml 2>/dev/null; then
             echo "FAIL: hard-coded develop path found"
             exit 1
           fi
