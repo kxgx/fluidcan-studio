@@ -452,6 +452,20 @@ jobs:
             cp "$f" "$dest"
           done < <(find artifacts -type f -print0)
           ls -lh release-assets
+      - name: 校验发布文件
+        run: |
+          set -e
+          mapfile -t files < <(find release-assets -type f | sort)
+          echo "release files: ${#files[@]}"
+          printf '%s\n' "${files[@]}"
+          if [ "${#files[@]}" -eq 0 ] || [ "${#files[@]}" -gt 40 ]; then
+            echo "::error::unexpected release file count: ${#files[@]}"
+            exit 1
+          fi
+          if find release-assets -type f ! -name '*.exe' ! -name '*.msi' ! -name '*.deb' ! -name '*.rpm' ! -name '*.AppImage' ! -name '*.dmg' ! -name '*.apk' | grep -q .; then
+            echo "::error::non-release file found in release-assets"
+            exit 1
+          fi
       - name: 生成校验和
         run: |
           echo "Build: ${{ github.ref_name }}" > SHA256SUMS.txt
