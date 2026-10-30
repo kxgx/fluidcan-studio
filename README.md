@@ -145,12 +145,12 @@ APK：
 - `enableOnBackInvokedCallback=true`，保留预测性返回
 - Android 上使用内置 `127.0.0.1` Axum 服务，WebView 打开同一 UI
 
-已实测（V2123A / Android 11）：
+已实测（Xiaomi 25098PN5AC / HyperOS OS4.0.5.0.XBLCNXM）：
 
 - APK 安装、启动成功
 - 启动后自动扫描局域网并发现 `192.168.2.83`，自动连接
 - 自动扫描后无需手动输入地址，总览读取到状态、MPos、CAN running
-- 状态栏安全区正常，不再遮挡顶部
+- 状态栏安全区正常，不再遮挡顶部，也无顶部空白
 
 澎湃OS真机尚未实测；APK 的 targetSdk/16KB/边到边等适配已按文档完成。
 
@@ -198,6 +198,7 @@ Windows 中文路径下 NDK 链接器会报错；脚本会自动复制到 ASCII 
 - 设备未接 CAN 驱动器时显示 `no devices` 是正常的。
 - fluid-installer 的 Web Serial 烧录需要 Chrome/Edge 且设备 USB 连接。
 - GUI 模式与 Web 模式是同一个二进制、同一套功能，没有拆分。
+
 
 
 
