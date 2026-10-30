@@ -378,7 +378,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
       - name: 安装 Android SDK/NDK
         run: |
           sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
@@ -495,3 +495,4 @@ jobs:
             echo "| Android ARM64 | ${{ needs.android-arm64.result }} |"
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$FAIL"
+
