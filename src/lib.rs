@@ -1,6 +1,7 @@
 
 use std::{
     io::{Read, Write},
+    net::{IpAddr, Ipv4Addr, UdpSocket},
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
@@ -27,7 +28,7 @@ struct InstallerAssets;
 #[folder = "firmware/"]
 struct FirmwareAssets;
 
-const DEFAULT_DEVICE: &str = "http://192.168.2.83";
+const DEFAULT_DEVICE: &str = "";
 const DEFAULT_PORT: u16 = 8088;
 const RELEASE_NAME: &str = "fluidcan-pcb5";
 const GITHUB_REPO: &str = "kxgx/FluidNC";
@@ -116,7 +117,7 @@ fn err<T: Into<String>>(msg: T) -> (StatusCode, Json<ApiError>) {
 fn normalize_base(url: &str) -> String {
     let mut s = url.trim().to_string();
     if s.is_empty() {
-        s = DEFAULT_DEVICE.to_string();
+        return String::new();
     }
     if !s.starts_with("http://") && !s.starts_with("https://") {
         s = format!("http://{s}");
@@ -410,6 +411,121 @@ async fn ota_update(
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, Json(ApiError { error: e })))?;
     Ok(Json(result))
+}
+
+
+fn scan_local_ipv4s() -> Vec<Ipv4Addr> {
+    let mut out = Vec::new();
+    if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
+        if sock.connect("8.8.8.8:80").is_ok() {
+            if let Ok(addr) = sock.local_addr() {
+                if let IpAddr::V4(ip) = addr.ip() {
+                    if !ip.is_loopback() {
+                        out.push(ip);
+                    }
+                }
+            }
+        }
+    }
+    for s in local_ips() {
+        if let Ok(ip) = s.parse::<Ipv4Addr>() {
+            if !ip.is_loopback() && !out.contains(&ip) {
+                out.push(ip);
+            }
+        }
+    }
+    // Prefer normal home/office LANs over VPN / virtual adapters.
+    out.sort_by_key(|ip| {
+        let o = ip.octets();
+        if o[0] == 192 && o[1] == 168 { 0 }
+        else if o[0] == 10 { 1 }
+        else if o[0] == 172 && (16..=31).contains(&o[1]) { 2 }
+        else { 3 }
+    });
+    out
+}
+
+async fn probe_fluidnc(ip: Ipv4Addr) -> Option<Value> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(900))
+        .build()
+        .ok()?;
+    let url = format!("http://{ip}/command?plain=%24I");
+    let resp = client.get(&url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let text = resp.text().await.ok()?;
+    if !text.contains("[VER:") && !text.contains("FluidNC") {
+        return None;
+    }
+    let version = text
+        .split("[VER:")
+        .nth(1)
+        .and_then(|v| v.split(']').next())
+        .unwrap_or("FluidNC")
+        .to_string();
+    Some(json!({
+        "ip": ip.to_string(),
+        "url": format!("http://{ip}"),
+        "version": version,
+    }))
+}
+
+async fn scan_subnet(local: Ipv4Addr) -> Vec<Value> {
+    let octets = local.octets();
+    let sem = Arc::new(tokio::sync::Semaphore::new(32));
+    let mut set = tokio::task::JoinSet::new();
+    for host in 1u8..=254 {
+        if host == octets[3] {
+            continue;
+        }
+        let ip = Ipv4Addr::new(octets[0], octets[1], octets[2], host);
+        let sem = sem.clone();
+        set.spawn(async move {
+            let _permit = sem.acquire_owned().await.ok()?;
+            probe_fluidnc(ip).await
+        });
+    }
+    let mut devices = Vec::new();
+    while let Some(item) = set.join_next().await {
+        if let Ok(Some(device)) = item {
+            devices.push(device);
+        }
+    }
+    devices.sort_by(|a, b| {
+        a.get("ip")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .cmp(b.get("ip").and_then(Value::as_str).unwrap_or(""))
+    });
+    devices
+}
+
+async fn scan_devices() -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
+    let candidates = scan_local_ipv4s();
+    if candidates.is_empty() {
+        return Err(err("无法确定本机局域网地址，请手动输入设备地址"));
+    }
+    let mut scanned = Vec::new();
+    let mut devices = Vec::new();
+    for local in &candidates {
+        scanned.push(format!(
+            "{}.{}.{}.0/24",
+            local.octets()[0],
+            local.octets()[1],
+            local.octets()[2]
+        ));
+        devices = scan_subnet(*local).await;
+        if !devices.is_empty() {
+            break;
+        }
+    }
+    Ok(Json(json!({
+        "subnets": scanned,
+        "local_ip": candidates[0].to_string(),
+        "devices": devices,
+    })))
 }
 
 async fn remote_releases(State(_st): State<Arc<AppState>>) -> Response {
@@ -806,6 +922,7 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/firmware", get(firmware_info))
         .route("/install/ota", post(ota_update))
         .route("/install/flash", post(flash_serial))
+        .route("/scan", get(scan_devices))
         .route("/updates", get(remote_releases))
         .route("/ota/remote", post(remote_ota));
 
@@ -997,3 +1114,5 @@ pub fn run_android() {
         .run(tauri::generate_context!())
         .expect("run Android Tauri app");
 }
+
+

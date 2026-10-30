@@ -8,9 +8,11 @@ Windows GUI 使用 `windows_subsystem = "windows"`，启动时**不会额外弹�
 
 ![GUI](docs/gui.png)
 
+
 ## 功能
 
-- 连接 FluidNC：`http://192.168.2.83` 或任意地址
+- **扫描设备**：按本机 /24 局域网扫描 $I 响应，识别 FluidNC 并自动填入地址
+- 自动扫描局域网内的 FluidNC 设备（也支持手动输入地址）
 - 总览：固件版本、状态、MPos、CAN 总线错误计数、驱动在线/使能数量
 - PD42S1 驱动表：地址、固件、位置、误差、速度、运行状态、堵转、使能、到位
 - CAN：`$CANStatus`、`$CANFaults`、`$CANPos`、`$CANDriverInfo`、`$CANScan`、`$CANAutoConfig`、`$CANReset`、`$CANLog`
@@ -146,8 +148,8 @@ APK：
 已实测（V2123A / Android 11）：
 
 - APK 安装、启动成功
-- 进入应用后成功连接 `http://192.168.2.83`
-- 总览读取到状态、MPos、CAN running
+- 启动后自动扫描局域网并发现 `192.168.2.83`，自动连接
+- 自动扫描后无需手动输入地址，总览读取到状态、MPos、CAN running
 - 状态栏安全区正常，不再遮挡顶部
 
 澎湃OS真机尚未实测；APK 的 targetSdk/16KB/边到边等适配已按文档完成。
@@ -172,7 +174,7 @@ Windows 中文路径下 NDK 链接器会报错；脚本会自动复制到 ASCII 
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `FLUIDCAN_DEVICE` | `http://192.168.2.83` | 初始控制器地址 |
+| `FLUIDCAN_DEVICE` | 空（自动扫描） | 可选，手动指定初始控制器地址；不设置则启动扫描 |
 | `FLUIDCAN_MODE` | 空 | `web` 强制 Web 模式 |
 | `FLUIDCAN_WEB_HOST` | `0.0.0.0` | Web 监听地址 |
 | `FLUIDCAN_WEB_PORT` | `8088` | Web 端口 |
@@ -196,6 +198,8 @@ Windows 中文路径下 NDK 链接器会报错；脚本会自动复制到 ASCII 
 - 设备未接 CAN 驱动器时显示 `no devices` 是正常的。
 - fluid-installer 的 Web Serial 烧录需要 Chrome/Edge 且设备 USB 连接。
 - GUI 模式与 Web 模式是同一个二进制、同一套功能，没有拆分。
+
+
 
 
 

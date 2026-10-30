@@ -32,8 +32,11 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
 <body>
 <header>
   <div class="brand">Fluid<b>CAN</b> Studio</div>
-  <input id="deviceUrl" value="http://192.168.2.83" style="width:230px" title="FluidNC 地址">
+  <input id="deviceUrl" placeholder="扫描或输入设备地址" style="width:230px" title="FluidNC 地址">
   <button class="primary" onclick="connectDevice()">连接</button>
+  <button onclick="scanDevices()">扫描设备</button>
+  <select id="scanResults" style="width:260px"><option value="">扫描结果</option></select>
+  <span id="scanMsg" class="pill">未扫描</span>
   <select id="serialPorts" style="width:150px"><option value="">串口...</option></select>
   <button onclick="refreshPorts()">刷新</button>
   <button onclick="openSerial()">打开串口</button>
@@ -144,7 +147,9 @@ function log(msg, cls='') { const el=$('consoleLog'); const d=document.createEle
 function showView(name){ document.querySelectorAll('.view').forEach(v=>v.classList.remove('active')); document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.view===name)); $('view-'+name).classList.add('active'); }
 async function api(path, opts={}) { const r=await fetch('/api'+path,{headers:{'Content-Type':'application/json'},...opts}); const t=await r.text(); let j; try{j=JSON.parse(t)}catch{j={raw:t}} if(!r.ok) throw new Error(j.error||t); return j; }
 function setConn(ok,text){ connected=ok; const p=$('connPill'); p.textContent=text||(ok?'已连接':'未连接'); p.className='pill '+(ok?'ok':'bad'); }
-async function connectDevice(){ const url=$('deviceUrl').value; try{ log('连接 '+url); const j=await api('/connect',{method:'POST',body:JSON.stringify({url})}); setConn(j.connected, j.connected?'已连接 '+j.base:'连接失败'); log(JSON.stringify(j), j.connected?'ok':'err'); if(j.connected) refreshAll(); }catch(e){ setConn(false,'连接失败'); log(String(e),'err'); } }
+async function scanDevices(){ const sel=$("scanResults"); $("scanMsg").textContent="扫描中..."; sel.innerHTML="<option>扫描中...</option>"; try{ const j=await api("/scan"); const ds=j.devices||[]; sel.innerHTML=ds.length?ds.map(d=>`<option value="${esc(d.url)}">${esc(d.version||"FluidNC")} · ${esc(d.ip)}</option>`).join(""):'<option value="">未发现设备</option>'; $("scanMsg").textContent=ds.length?`发现 ${ds.length} 台`:"未发现"; log(`扫描 ${j.subnet||""}: ${ds.length} 台`, ds.length?"ok":"err"); if(ds.length===1){ $("deviceUrl").value=ds[0].url; await connectDevice(); setTimeout(refreshAll, 800); } }catch(e){ sel.innerHTML='<option value="">扫描失败</option>'; $("scanMsg").textContent="扫描失败"; log(String(e),"err"); } }
+sel = document.getElementById("scanResults");
+async function connectDevice(){ const url=$('deviceUrl').value.trim(); if(!url){ scanDevices(); return; } try{ log('连接 '+url); const j=await api('/connect',{method:'POST',body:JSON.stringify({url})}); setConn(j.connected, j.connected?'已连接 '+j.base:'连接失败'); log(JSON.stringify(j), j.connected?'ok':'err'); if(j.connected) await refreshAll(); }catch(e){ setConn(false,'连接失败'); log(String(e),'err'); } }
 function kv(el, rows){ el.innerHTML = rows.map(([k,v])=>`<div class="kv"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join(''); }
 function esc(s){ return String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 function pick(text,re,def='--'){ const m=String(text||'').match(re); return m?m[1]:def; }
@@ -173,10 +178,12 @@ async function flashSerial(){ const port=$('flashPort').value.trim(); const baud
 setInterval(()=>{$('clock').textContent=new Date().toLocaleString()},1000);
 refreshPorts();
 log('FluidCAN Studio 已启动，先连接控制器。');
-setTimeout(connectDevice, 500);
+async function bootConnect(){ try{ const h=await api("/health"); if(h.default_device){ $("deviceUrl").value=h.default_device; connectDevice(); return; } }catch(e){} scanDevices(); }
+setTimeout(bootConnect, 500);
 </script>
 </body>
 </html>
+
 
 
 

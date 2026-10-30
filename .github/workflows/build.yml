@@ -438,10 +438,22 @@ jobs:
           pattern: FluidCAN-Studio-**
           path: artifacts
           merge-multiple: true
+      - name: 整理发布文件
+        run: |
+          mkdir -p release-assets
+          while IFS= read -r -d '' f; do
+            base=$(basename "$f" | tr ' ' '_')
+            dest="release-assets/$base"
+            if [ -e "$dest" ]; then
+              dest="release-assets/$(printf '%s' "$f" | sha256sum | cut -c1-8)-$base"
+            fi
+            cp "$f" "$dest"
+          done < <(find artifacts -type f -print0)
+          ls -lh release-assets
       - name: 生成校验和
         run: |
           echo "Build: ${{ github.ref_name }}" > SHA256SUMS.txt
-          find artifacts -type f -print0 | sort -z | xargs -0 sha256sum >> SHA256SUMS.txt || true
+          find release-assets -type f -print0 | sort -z | xargs -0 sha256sum >> SHA256SUMS.txt || true
           cat SHA256SUMS.txt
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v3
@@ -454,45 +466,63 @@ jobs:
             - Windows x64 / ARM64: NSIS 安装包 + 便携 exe
             - Linux x64 / ARM64: deb / rpm / AppImage
             - macOS x64 / ARM64: dmg
+            - Android ARM64: APK
 
             内置网页 UI、fluid-installer 和固件，单文件运行。
           files: |
-            artifacts/**/*
+            release-assets/**/*
             SHA256SUMS.txt
+          overwrite_files: true
+          fail_on_unmatched_files: false
           draft: false
           prerelease: false
           make_latest: true
 
   ci-passed:
-    name: 全平台编译通过
+    name: 全平台编译检查
     needs: [checks, win-x64, win-arm64, mac-x64, mac-arm64, linux-x64, linux-arm64, android-arm64]
     if: always() && github.repository == 'kxgx/fluidcan-studio'
     runs-on: ubuntu-latest
     steps:
       - name: 汇总构建结果
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
-          FAIL=0
-          for r in \
-            ${{ needs.win-x64.result }} \
-            ${{ needs.win-arm64.result }} \
-            ${{ needs.mac-x64.result }} \
-            ${{ needs.mac-arm64.result }} \
-            ${{ needs.linux-x64.result }} \
-            ${{ needs.linux-arm64.result }}; do
-            if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then FAIL=1; fi
-          done
-          {
-            echo "## FluidCAN Studio 构建结果"
-            echo ""
-            echo "| 平台 | 结果 |"
-            echo "|---|---|"
-            echo "| Windows x64 | ${{ needs.win-x64.result }} |"
-            echo "| Windows ARM64 | ${{ needs.win-arm64.result }} |"
-            echo "| macOS x64 | ${{ needs.mac-x64.result }} |"
-            echo "| macOS ARM64 | ${{ needs.mac-arm64.result }} |"
-            echo "| Linux x64 | ${{ needs.linux-x64.result }} |"
-            echo "| Linux ARM64 | ${{ needs.linux-arm64.result }} |"
-            echo "| Android ARM64 | ${{ needs.android-arm64.result }} |"
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit "$FAIL"
+          python3 - <<'PY'
+          import json, os
+          needs = json.loads(os.environ["NEEDS_JSON"])
+          labels = {
+              "checks": "代码检查",
+              "win-x64": "Windows x64",
+              "win-arm64": "Windows ARM64",
+              "mac-x64": "macOS x64",
+              "mac-arm64": "macOS ARM64",
+              "linux-x64": "Linux x64",
+              "linux-arm64": "Linux ARM64",
+              "android-arm64": "Android ARM64",
+          }
+          status_icons = {
+              "success": "✅ 通过",
+              "skipped": "⏭️ 跳过",
+              "failure": "❌ 失败",
+              "cancelled": "⚪ 取消",
+              "queued": "⏳ 排队",
+              "in_progress": "⏳ 进行中",
+          }
+          lines = ["## FluidCAN Studio 全平台编译检查", "", "| 平台 | 结果 |", "|---|---|"]
+          failed = []
+          for key, label in labels.items():
+              if key not in needs:
+                  continue
+              r = needs[key].get("result", "unknown")
+              lines.append(f"| {label} | {status_icons.get(r, '❔ ' + r)} |")
+              if r not in ("success", "skipped"):
+                  failed.append(f"{key}={r}")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+              f.write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          if failed:
+              print("未通过:", ", ".join(failed))
+              raise SystemExit(1)
+          PY
 
