@@ -6,7 +6,7 @@ Rust + Tauri 的 FluidNC CAN 调试、控制、配置与固件安装工具，面
 
 ![桌面 GUI](docs/gui.png)
 
-当前发布版本：`studio-v0.2.1`
+当前发布版本：`studio-v0.2.2`
 
 ## 功能
 
@@ -159,21 +159,23 @@ Android 是独立构建版本，复用同一套 Rust 后端、网页 UI 和内�
 
 ![Android HyperOS](docs/android.png)
 
-适配项（参考小米澎湃OS Android 15 应用适配指南）：
+适配项（参考小米澎湃OS Android 17 应用适配指南）：
 
-- `minSdk 24`，`targetSdk 35`，`compileSdk 36`
+- `minSdk 24`，`targetSdk 37`，`compileSdk 37`
 - AArch64 原生库，16 KB page size 对齐（已用 `zipalign -c -P 16` 验证）
-- `enableEdgeToEdge()` + 原生 `WindowInsets` 安全区
-- 局域网 HTTP：`usesCleartextTraffic=true` + Network Security Config
+- `enableEdgeToEdge()` + 原生 `WindowInsets` 安全区（不重复叠加 CSS safe-area）
+- 局域网 HTTP：仅使用 Network Security Config（已移除对 `usesCleartextTraffic` 的依赖）
+- `ACCESS_LOCAL_NETWORK` 运行时权限（targetSdk 37 必需）
 - `enableOnBackInvokedCallback=true`，保留预测性返回
 - Android 上启动内置 `127.0.0.1` Axum 服务，WebView 加载同一 UI
 
-已在 Xiaomi `25098PN5AC` / HyperOS `OS4.0.5.0.XBLCNXM` 实测：
+已在 Xiaomi `25098PN5AC` / HyperOS `OS4.0.5.0.XBLCNXM`（Android 17 / SDK 37）实测：
 
 - APK 安装、启动成功
 - 启动后自动扫描局域网并发现控制器
 - 自动连接后读取状态、MPos、CAN running
 - 状态栏安全区正常，无顶部空白
+- `ACCESS_LOCAL_NETWORK` 授权后扫描和局域网请求正常
 
 说明：
 
@@ -181,8 +183,8 @@ Android 是独立构建版本，复用同一套 Rust 后端、网页 UI 和内�
 - Android 主要使用 Wi-Fi 连接控制器、CAN、运动、配置和 OTA。
 - Web Serial 和 USB 串口烧录不作为 Android 主路径。
 - 小米澎湃OS 文档：
-  - <https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1826>
-  - <https://dev.mi.com/xiaomihyperos/documentation>
+  - [Android 17 应用适配指南](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=2297)
+  - [小米澎湃OS开发者文档](https://dev.mi.com/xiaomihyperos/documentation)
 
 ## 设备扫描
 

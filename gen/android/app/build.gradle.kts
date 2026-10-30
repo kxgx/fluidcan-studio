@@ -15,13 +15,12 @@ val tauriProperties = Properties().apply {
 }
 
 android {
-    compileSdk = 36
+    compileSdk = 37
     namespace = "com.fluidcan.studio"
     defaultConfig {
-        manifestPlaceholders["usesCleartextTraffic"] = "true"
         applicationId = "com.fluidcan.studio"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 37
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
     }
@@ -32,7 +31,6 @@ android {
     }
     buildTypes {
         getByName("debug") {
-            manifestPlaceholders["usesCleartextTraffic"] = "true"
             isDebuggable = true
             isJniDebuggable = true
             isMinifyEnabled = false
