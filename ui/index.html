@@ -2,11 +2,11 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>FluidCAN Studio</title>
 <style>
 :root{--bg:#0b1016;--panel:#121a23;--panel2:#0f1620;--line:#223040;--txt:#dce7f2;--dim:#7f93a8;--acc:#28d7a1;--acc2:#4aa8ff;--warn:#ffb454;--bad:#ff5f6d}
-*{box-sizing:border-box}body{margin:0;background:radial-gradient(1200px 700px at 20% -10%,#15283a 0,transparent 60%),var(--bg);color:var(--txt);font:14px/1.45 "Segoe UI","Microsoft YaHei",sans-serif}
+*{box-sizing:border-box}body{margin:0;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px);-webkit-tap-highlight-color:transparent;background:radial-gradient(1200px 700px at 20% -10%,#15283a 0,transparent 60%),var(--bg);color:var(--txt);font:14px/1.45 "Segoe UI","Microsoft YaHei",sans-serif}
 header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 18px;border-bottom:1px solid var(--line);background:#0d141c;position:sticky;top:0;z-index:5}
 .brand{font-size:18px;font-weight:700;letter-spacing:.5px;margin-right:8px}.brand b{color:var(--acc)}
 .grow{flex:1}input,select,textarea,button{font:inherit;color:var(--txt);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;outline:none}
@@ -25,7 +25,7 @@ textarea.code{width:100%;min-height:520px;resize:vertical;padding:12px}
 table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid #1c2a38}th{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.5px}td.mono{font-family:Consolas,monospace;font-size:12px}.oktxt{color:var(--acc)}.badtxt{color:var(--bad)}.warntxt{color:var(--warn)}
 .log{height:260px;overflow:auto;background:#080d13;border:1px solid #1b2835;border-radius:10px;padding:10px;font-family:Consolas,monospace;font-size:12px;color:#b8cbe0}
 .log .in{color:var(--acc2)}.log .err{color:var(--bad)}.log .ok{color:var(--acc)}.log .muted{color:var(--dim)}
-.split{display:grid;gap:12px;grid-template-columns:1.1fr .9fr}@media(max-width:900px){.split{grid-template-columns:1fr}.layout{display:block}nav{width:auto;display:flex;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--line)}nav button{width:auto}}
+.split{display:grid;gap:12px;grid-template-columns:1.1fr .9fr}@media(max-width:900px){.split{grid-template-columns:1fr}.layout{display:block}nav{width:auto;display:flex;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--line);overflow-x:auto}nav button{width:auto}header{padding:10px 12px}header input#deviceUrl{width:100%!important}main{padding:14px 12px!important}h1{font-size:20px}pre,textarea.code{font-size:12px}}
 .tag{font-size:11px;border:1px solid #2b4054;border-radius:6px;padding:2px 6px;color:#9fb6cc;margin-left:6px}
 </style>
 </head>
@@ -177,5 +177,6 @@ setTimeout(connectDevice, 500);
 </script>
 </body>
 </html>
+
 
 

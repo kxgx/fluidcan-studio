@@ -7,6 +7,10 @@ description = "FluidNC CAN motor control / debug / installer studio"
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[lib]
+name = "fluidcan_studio"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [dependencies]
 axum = { version = "0.8", features = ["multipart"] }
 tokio = { version = "1", features = ["full"] }
@@ -26,3 +30,4 @@ chrono = "0.4"
 tauri = { version = "2", features = [] }
 rust-embed = "8"
 mime_guess = "2"
+

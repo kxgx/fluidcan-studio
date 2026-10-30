@@ -67,7 +67,7 @@ $env:FLUIDCAN_WEB_TOKEN="自定义token"
 Web 模式不会打开终端窗口；启动 URL/token 会写入：
 
 ```text
-%TEMP%\\fluidcan-studio.log
+%TEMP%\fluidcan-studio.log
 ```
 
 如果当前系统有桌面，会自动用浏览器打开本地带 token 的地址。
@@ -123,7 +123,41 @@ git push origin studio-v0.1.0
 
 Linux 上 Tauri 依赖 WebKitGTK/GTK；因此 **Linux GUI 不是完全静态二进制**，而是 deb/rpm/AppImage 包。完全无桌面的 headless Web 模式仍由同一二进制运行。
 
-## 环境变量
+'
+## Android / Xiaomi HyperOS
+
+Android 是独立构建版本，但复用同一套 Rust 后端、网页 UI 和内置资源。
+
+APK：
+
+- `dist/FluidCAN-Studio-android-arm64.apk`
+
+适配项（参考小米澎湃OS Android 15 应用适配指南）：
+
+- `minSdk 24`，`targetSdk 35`，`compileSdk 36`
+- AArch64 原生库，16 KB page size 对齐 [已用 `zipalign -c -P 16` 验证]
+- `enableEdgeToEdge()` + CSS `env(safe-area-inset-*)` 安全区
+- 局域网 HTTP 访问设备：`usesCleartextTraffic=true` + Network Security Config
+- `enableOnBackInvokedCallback=true`，保留预测性返回
+- Android 上使用内置 `127.0.0.1` Axum 服务，WebView 打开同一 UI
+
+构建：
+
+```powershell
+npm install
+.\scripts\build-android.ps1
+```
+
+Windows 中文路径下 NDK 链接器会报错；脚本会自动复制到 ASCII 路径构建。
+
+说明：
+
+- 当前 APK 使用测试签名，正式发布需要配置自己的 keystore。
+- Android 端重点是 Wi-Fi 连接控制器、CAN/运动/配置/OTA；Web Serial 和 USB 串口烧录不作为 Android 主路径。
+- 小米澎湃OS 适配文档：
+  - <https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1826>
+  - <https://dev.mi.com/xiaomihyperos/documentation>
+'\n## 环境变量
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
@@ -151,6 +185,7 @@ Linux 上 Tauri 依赖 WebKitGTK/GTK；因此 **Linux GUI 不是完全静态二�
 - 设备未接 CAN 驱动器时显示 `no devices` 是正常的。
 - fluid-installer 的 Web Serial 烧录需要 Chrome/Edge 且设备 USB 连接。
 - GUI 模式与 Web 模式是同一个二进制、同一套功能，没有拆分。
+
 
 
 
