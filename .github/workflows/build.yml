@@ -1,0 +1,438 @@
+name: FluidCAN Studio build
+
+on:
+  push:
+    branches: [main]
+    tags: ["studio-v*"]
+    paths-ignore:
+      - "*.md"
+      - "**/*.md"
+  pull_request:
+    paths-ignore:
+      - "*.md"
+      - "**/*.md"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: 代码与资源检查
+    runs-on: ubuntu-24.04
+    outputs:
+      code: ${{ steps.codechange.outputs.code }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 0. 检测代码变更
+        id: codechange
+        run: |
+          BASE=main
+          if [ "${{ github.event_name }}" = "pull_request" ]; then BASE="${{ github.base_ref }}"; fi
+          git fetch --no-tags origin "$BASE" 2>/dev/null || true
+          if ! git rev-parse --verify "origin/$BASE" >/dev/null 2>&1; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "origin/$BASE...HEAD" -- . \
+            ':(exclude)*.md' ':(exclude)**/*.md' ':(exclude).github/**' \
+            ':(exclude).gitignore' > /tmp/changed.txt 2>/dev/null; then
+            if [ -s /tmp/changed.txt ]; then echo "code=true" >> "$GITHUB_OUTPUT"; else echo "code=false" >> "$GITHUB_OUTPUT"; fi
+          else
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 1. 检查 Tauri 配置
+        run: |
+          python3 - <<'PY'
+          import json
+          d = json.load(open("tauri.conf.json", encoding="utf-8"))
+          assert d["productName"], "productName missing"
+          assert d["identifier"], "identifier missing"
+          assert d["build"]["frontendDist"] == "ui", "frontendDist must be ui"
+          print("OK: tauri.conf.json")
+          PY
+
+      - name: 2. 检查内置资源完整
+        run: |
+          test -f ui/index.html
+          test -f installer-dist/index.html
+          test -f firmware/firmware.bin
+          test -f firmware/firmware.factory.bin
+          test -f firmware/bootloader.bin
+          test -f firmware/partitions.bin
+          echo "OK: embedded ui/installer/firmware present"
+
+      - name: 3. 检查源码未写死开发机路径
+        run: |
+          if grep -R "C:\\FluidNC\|installer-dist\" src ui Cargo.toml 2>/dev/null; then
+            echo "FAIL: hard-coded develop path found"
+            exit 1
+          fi
+          echo "OK: no hard-coded develop path"
+
+      - name: 4. 检查 Rust 格式
+        run: |
+          cargo fmt --all -- --check || {
+            echo "提示：格式检查失败；不阻塞打包，仅提示"
+          }
+
+      - name: 5. Tauri 配置构建校验
+        run: |
+          python3 - <<'PY'
+          import json
+          d = json.load(open("tauri.conf.json", encoding="utf-8"))
+          icons = d["bundle"]["icon"]
+          import os
+          for i in icons:
+              assert os.path.exists(i), i
+          print("OK: bundle icons")
+          PY
+
+  win-x64:
+    name: Windows x64
+    needs: checks
+    if: needs.checks.outputs.code == 'true' || startsWith(github.ref, 'refs/tags/')
+    runs-on: windows-2022
+    timeout-minutes: 50
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: 安装 Tauri CLI
+        run: npm install --global @tauri-apps/cli@latest
+      - name: 设置版本
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#studio-v}"
+          python - <<'PY'
+          import json, os
+          p = "tauri.conf.json"
+          d = json.load(open(p, encoding="utf-8"))
+          d["version"] = os.environ["VERSION"].removeprefix("studio-v")
+          json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+          PY
+        env:
+          VERSION: ${{ github.ref_name }}
+      - name: 编译 NSIS
+        run: tauri build --bundles nsis
+      - name: 收集
+        shell: bash
+        run: |
+          mkdir -p out
+          cp -R target/release/bundle/nsis/. out/
+          cp target/release/fluidcan-studio.exe "out/FluidCAN-Studio-windows-x64-portable.exe"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: FluidCAN-Studio-windows-x64
+          path: out/**
+
+  win-arm64:
+    name: Windows ARM64
+    needs: checks
+    if: needs.checks.outputs.code == 'true' || startsWith(github.ref, 'refs/tags/')
+    runs-on: windows-11-arm
+    timeout-minutes: 50
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+      - name: 安装 Tauri CLI
+        run: npm install --global @tauri-apps/cli@latest
+      - name: 设置版本
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          p = "tauri.conf.json"
+          d = json.load(open(p, encoding="utf-8"))
+          d["version"] = os.environ["VERSION"].removeprefix("studio-v")
+          json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+          PY
+        env:
+          VERSION: ${{ github.ref_name }}
+      - name: 编译 NSIS (ARM64)
+        run: tauri build --target aarch64-pc-windows-msvc --bundles nsis
+      - name: 收集
+        shell: bash
+        run: |
+          mkdir -p out
+          cp -R target/aarch64-pc-windows-msvc/release/bundle/nsis/. out/
+          cp target/aarch64-pc-windows-msvc/release/fluidcan-studio.exe "out/FluidCAN-Studio-windows-arm64-portable.exe"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: FluidCAN-Studio-windows-arm64
+          path: out/**
+
+  mac-x64:
+    name: macOS x64 (Intel)
+    needs: checks
+    if: needs.checks.outputs.code == 'true' || startsWith(github.ref, 'refs/tags/')
+    runs-on: macos-26-intel
+    timeout-minutes: 50
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: 安装 Tauri CLI
+        run: npm install --global @tauri-apps/cli@latest
+      - name: 设置版本
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#studio-v}"
+          python - <<'PY'
+          import json, os
+          p = "tauri.conf.json"
+          d = json.load(open(p, encoding="utf-8"))
+          d["version"] = os.environ["VERSION"].removeprefix("studio-v")
+          json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+          PY
+        env:
+          VERSION: ${{ github.ref_name }}
+      - name: 编译 DMG
+        run: tauri build --bundles dmg
+      - name: 收集
+        shell: bash
+        run: |
+          mkdir -p out
+          cp -R target/release/bundle/dmg/. out/ || true
+          cp -R target/release/bundle/macos/. out/ || true
+      - uses: actions/upload-artifact@v6
+        with:
+          name: FluidCAN-Studio-macos-x64
+          path: out/**
+
+  mac-arm64:
+    name: macOS ARM64
+    needs: checks
+    if: needs.checks.outputs.code == 'true' || startsWith(github.ref, 'refs/tags/')
+    runs-on: macos-latest
+    timeout-minutes: 50
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: 安装 Tauri CLI
+        run: npm install --global @tauri-apps/cli@latest
+      - name: 设置版本
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#studio-v}"
+          python - <<'PY'
+          import json, os
+          p = "tauri.conf.json"
+          d = json.load(open(p, encoding="utf-8"))
+          d["version"] = os.environ["VERSION"].removeprefix("studio-v")
+          json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+          PY
+        env:
+          VERSION: ${{ github.ref_name }}
+      - name: 编译 DMG
+        run: tauri build --bundles dmg
+      - name: 收集
+        shell: bash
+        run: |
+          mkdir -p out
+          cp -R target/release/bundle/dmg/. out/ || true
+          cp -R target/release/bundle/macos/. out/ || true
+      - uses: actions/upload-artifact@v6
+        with:
+          name: FluidCAN-Studio-macos-arm64
+          path: out/**
+
+  linux-x64:
+    name: Linux x64
+    needs: checks
+    if: needs.checks.outputs.code == 'true' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl wget file patchelf \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev libfuse2 rpm
+      - name: 安装 Tauri CLI
+        run: npm install --global @tauri-apps/cli@latest
+      - name: 设置版本
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+          p = "tauri.conf.json"
+          d = json.load(open(p, encoding="utf-8"))
+          d["version"] = os.environ["VERSION"].removeprefix("studio-v")
+          json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+          PY
+        env:
+          VERSION: ${{ github.ref_name }}
+      - name: 编译 deb/rpm/AppImage
+        run: tauri build --bundles deb,rpm,appimage
+      - name: 收集
+        run: |
+          mkdir -p out
+          cp -R target/release/bundle/deb/. out/ || true
+          cp -R target/release/bundle/rpm/. out/ || true
+          cp -R target/release/bundle/appimage/. out/ || true
+      - uses: actions/upload-artifact@v6
+        with:
+          name: FluidCAN-Studio-linux-x64
+          path: out/**
+
+  linux-arm64:
+    name: Linux ARM64
+    needs: checks
+    if: needs.checks.outputs.code == 'true' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 50
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl wget file patchelf \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev libfuse2 rpm
+      - name: 安装 Tauri CLI
+        run: npm install --global @tauri-apps/cli@latest
+      - name: 设置版本
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+          p = "tauri.conf.json"
+          d = json.load(open(p, encoding="utf-8"))
+          d["version"] = os.environ["VERSION"].removeprefix("studio-v")
+          json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+          PY
+        env:
+          VERSION: ${{ github.ref_name }}
+      - name: 编译 deb/rpm/AppImage
+        run: tauri build --bundles deb,rpm,appimage
+      - name: 收集
+        run: |
+          mkdir -p out
+          cp -R target/release/bundle/deb/. out/ || true
+          cp -R target/release/bundle/rpm/. out/ || true
+          cp -R target/release/bundle/appimage/. out/ || true
+      - uses: actions/upload-artifact@v6
+        with:
+          name: FluidCAN-Studio-linux-arm64
+          path: out/**
+
+  release:
+    name: 发布 Release
+    needs: [win-x64, win-arm64, mac-x64, mac-arm64, linux-x64, linux-arm64]
+    if: github.repository == 'kxgx/fluidcan-studio' && startsWith(github.ref, 'refs/tags/studio-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: FluidCAN-Studio-**
+          path: artifacts
+          merge-multiple: true
+      - name: 生成校验和
+        run: |
+          echo "Build: ${{ github.ref_name }}" > SHA256SUMS.txt
+          find artifacts -type f -print0 | sort -z | xargs -0 sha256sum >> SHA256SUMS.txt || true
+          cat SHA256SUMS.txt
+      - name: 创建 GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: FluidCAN Studio ${{ github.ref_name }}
+          body: |
+            FluidCAN Studio desktop release.
+
+            - Windows x64 / ARM64: NSIS 安装包 + 便携 exe
+            - Linux x64 / ARM64: deb / rpm / AppImage
+            - macOS x64 / ARM64: dmg
+
+            内置网页 UI、fluid-installer 和固件，单文件运行。
+          files: |
+            artifacts/**/*
+            SHA256SUMS.txt
+          draft: false
+          prerelease: false
+          make_latest: true
+
+  ci-passed:
+    name: 全平台编译通过
+    needs: [checks, win-x64, win-arm64, mac-x64, mac-arm64, linux-x64, linux-arm64]
+    if: always() && github.repository == 'kxgx/fluidcan-studio'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 汇总构建结果
+        run: |
+          FAIL=0
+          for r in \
+            ${{ needs.win-x64.result }} \
+            ${{ needs.win-arm64.result }} \
+            ${{ needs.mac-x64.result }} \
+            ${{ needs.mac-arm64.result }} \
+            ${{ needs.linux-x64.result }} \
+            ${{ needs.linux-arm64.result }}; do
+            if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then FAIL=1; fi
+          done
+          {
+            echo "## FluidCAN Studio 构建结果"
+            echo ""
+            echo "| 平台 | 结果 |"
+            echo "|---|---|"
+            echo "| Windows x64 | ${{ needs.win-x64.result }} |"
+            echo "| Windows ARM64 | ${{ needs.win-arm64.result }} |"
+            echo "| macOS x64 | ${{ needs.mac-x64.result }} |"
+            echo "| macOS ARM64 | ${{ needs.mac-arm64.result }} |"
+            echo "| Linux x64 | ${{ needs.linux-x64.result }} |"
+            echo "| Linux ARM64 | ${{ needs.linux-arm64.result }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$FAIL"
