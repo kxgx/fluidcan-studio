@@ -220,8 +220,8 @@ jobs:
         shell: bash
         run: |
           mkdir -p out
-          cp -R target/release/bundle/dmg/. out/ || true
-          cp -R target/release/bundle/macos/. out/ || true
+          find target/release/bundle/dmg -maxdepth 1 -type f -name '*.dmg' -exec cp {} out/ \; 2>/dev/null || true
+          ls -lh out
       - uses: actions/upload-artifact@v6
         with:
           name: FluidCAN-Studio-macos-x64
@@ -264,8 +264,8 @@ jobs:
         shell: bash
         run: |
           mkdir -p out
-          cp -R target/release/bundle/dmg/. out/ || true
-          cp -R target/release/bundle/macos/. out/ || true
+          find target/release/bundle/dmg -maxdepth 1 -type f -name '*.dmg' -exec cp {} out/ \; 2>/dev/null || true
+          ls -lh out
       - uses: actions/upload-artifact@v6
         with:
           name: FluidCAN-Studio-macos-arm64
@@ -309,9 +309,10 @@ jobs:
       - name: 收集
         run: |
           mkdir -p out
-          cp -R target/release/bundle/deb/. out/ || true
-          cp -R target/release/bundle/rpm/. out/ || true
-          cp -R target/release/bundle/appimage/. out/ || true
+          find target/release/bundle/deb -maxdepth 1 -type f -name '*.deb' -exec cp {} out/ \; 2>/dev/null || true
+          find target/release/bundle/rpm -maxdepth 1 -type f -name '*.rpm' -exec cp {} out/ \; 2>/dev/null || true
+          find target/release/bundle/appimage -maxdepth 1 -type f -name '*.AppImage' -exec cp {} out/ \; 2>/dev/null || true
+          ls -lh out
       - uses: actions/upload-artifact@v6
         with:
           name: FluidCAN-Studio-linux-x64
@@ -355,9 +356,10 @@ jobs:
       - name: 收集
         run: |
           mkdir -p out
-          cp -R target/release/bundle/deb/. out/ || true
-          cp -R target/release/bundle/rpm/. out/ || true
-          cp -R target/release/bundle/appimage/. out/ || true
+          find target/release/bundle/deb -maxdepth 1 -type f -name '*.deb' -exec cp {} out/ \; 2>/dev/null || true
+          find target/release/bundle/rpm -maxdepth 1 -type f -name '*.rpm' -exec cp {} out/ \; 2>/dev/null || true
+          find target/release/bundle/appimage -maxdepth 1 -type f -name '*.AppImage' -exec cp {} out/ \; 2>/dev/null || true
+          ls -lh out
       - uses: actions/upload-artifact@v6
         with:
           name: FluidCAN-Studio-linux-arm64
