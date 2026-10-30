@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FluidCAN Studio</title>
+<style>
+:root{--bg:#0b1016;--panel:#121a23;--panel2:#0f1620;--line:#223040;--txt:#dce7f2;--dim:#7f93a8;--acc:#28d7a1;--acc2:#4aa8ff;--warn:#ffb454;--bad:#ff5f6d}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(1200px 700px at 20% -10%,#15283a 0,transparent 60%),var(--bg);color:var(--txt);font:14px/1.45 "Segoe UI","Microsoft YaHei",sans-serif}
+header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 18px;border-bottom:1px solid var(--line);background:#0d141c;position:sticky;top:0;z-index:5}
+.brand{font-size:18px;font-weight:700;letter-spacing:.5px;margin-right:8px}.brand b{color:var(--acc)}
+.grow{flex:1}input,select,textarea,button{font:inherit;color:var(--txt);background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;outline:none}
+input:focus,textarea:focus,select:focus{border-color:var(--acc2)}button{cursor:pointer;transition:.15s}button:hover{border-color:var(--acc);color:#fff}button.primary{background:linear-gradient(135deg,#18b98f,#149bff);border:0;color:#04110e;font-weight:700}button.danger{border-color:#63313a;color:#ff9aa3}button.warn{border-color:#65502a;color:var(--warn)}
+.pill{font-size:12px;padding:4px 10px;border-radius:99px;border:1px solid var(--line);color:var(--dim)}.pill.ok{color:#04110e;background:var(--acc);border-color:var(--acc);font-weight:700}.pill.bad{color:#fff;background:#7a2830;border-color:#b23b48}.pill.warn2{color:#2a1a00;background:var(--warn);border-color:var(--warn)}
+.layout{display:flex;min-height:calc(100vh - 64px)}nav{width:170px;flex:0 0 170px;border-right:1px solid var(--line);padding:12px 10px;background:#0d141c}
+nav button{display:block;width:100%;text-align:left;margin:4px 0;border:0;background:transparent;color:var(--dim);padding:10px 12px;border-radius:8px}nav button.active{background:#162535;color:var(--acc);font-weight:700}
+main{flex:1;padding:18px;max-width:1500px}.view{display:none}.view.active{display:block}
+h1{font-size:17px;margin:0 0 4px}h2{font-size:15px;margin:18px 0 8px;color:#bcd0e3}.sub{color:var(--dim);font-size:12px;margin-bottom:14px}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}.card{background:linear-gradient(180deg,#131d27,#101821);border:1px solid var(--line);border-radius:12px;padding:14px}
+.card h3{margin:0 0 8px;font-size:12px;color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.6px}.kvbox{display:block;width:100%}.kv{display:flex;justify-content:space-between;gap:10px;padding:3px 0;border-bottom:1px dashed #1b2835;font-size:13px}.kv:last-child{border:0}.kv span{flex:0 0 auto;color:var(--dim)}.kv b{flex:1;min-width:0;font-weight:600;color:#fff;text-align:right;white-space:normal;overflow-wrap:anywhere}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}.row label{color:var(--dim);font-size:12px}
+pre,textarea.code{font-family:Consolas,"Cascadia Code",monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+pre{background:#080d13;border:1px solid #1b2835;border-radius:10px;padding:12px;max-height:420px;overflow:auto;margin:8px 0;color:#b8cbe0}
+textarea.code{width:100%;min-height:520px;resize:vertical;padding:12px}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid #1c2a38}th{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.5px}td.mono{font-family:Consolas,monospace;font-size:12px}.oktxt{color:var(--acc)}.badtxt{color:var(--bad)}.warntxt{color:var(--warn)}
+.log{height:260px;overflow:auto;background:#080d13;border:1px solid #1b2835;border-radius:10px;padding:10px;font-family:Consolas,monospace;font-size:12px;color:#b8cbe0}
+.log .in{color:var(--acc2)}.log .err{color:var(--bad)}.log .ok{color:var(--acc)}.log .muted{color:var(--dim)}
+.split{display:grid;gap:12px;grid-template-columns:1.1fr .9fr}@media(max-width:900px){.split{grid-template-columns:1fr}.layout{display:block}nav{width:auto;display:flex;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--line)}nav button{width:auto}}
+.tag{font-size:11px;border:1px solid #2b4054;border-radius:6px;padding:2px 6px;color:#9fb6cc;margin-left:6px}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">Fluid<b>CAN</b> Studio</div>
+  <input id="deviceUrl" value="http://192.168.2.83" style="width:230px" title="FluidNC 地址">
+  <button class="primary" onclick="connectDevice()">连接</button>
+  <select id="serialPorts" style="width:150px"><option value="">串口...</option></select>
+  <button onclick="refreshPorts()">刷新</button>
+  <button onclick="openSerial()">打开串口</button>
+  <span id="connPill" class="pill">未连接</span>
+  <span class="grow"></span>
+  <span id="clock" class="pill"></span>
+</header>
+<div class="layout">
+<nav>
+  <button class="active" data-view="overview" onclick="showView('overview')">总览</button>
+  <button data-view="can" onclick="showView('can')">CAN 驱动</button>
+  <button data-view="control" onclick="showView('control')">运动控制</button>
+  <button data-view="config" onclick="showView('config')">配置</button>
+  <button data-view="install" onclick="showView('install')">固件安装</button>
+  <button data-view="console" onclick="showView('console')">控制台</button>
+</nav>
+<main>
+  <section id="view-overview" class="view active">
+    <h1>总览</h1><div class="sub">FluidNC + PD42S1 CAN 四电机控制板</div>
+    <div class="grid">
+      <div class="card"><h3>固件</h3><div id="fwBox" class="kvbox"><span>未读取</span></div></div>
+      <div class="card"><h3>状态</h3><div id="stateBox" class="kvbox"><span>未读取</span></div></div>
+      <div class="card"><h3>CAN 总线</h3><div id="canBox" class="kvbox"><span>未读取</span></div></div>
+      <div class="card"><h3>驱动在线</h3><div id="drvBox" class="kvbox"><span>未读取</span></div></div>
+    </div>
+    <h2>PD42S1 驱动</h2>
+    <div class="card"><table><thead><tr><th>地址</th><th>固件</th><th>位置</th><th>误差</th><th>速度</th><th>运行</th><th>堵转</th><th>使能</th><th>到位</th></tr></thead><tbody id="driverTable"><tr><td colspan="9" class="muted">点击“刷新”读取</td></tr></tbody></table></div>
+    <div class="row"><button class="primary" onclick="refreshAll()">刷新</button><button onclick="refreshCan()">刷新 CAN</button><span id="lastUpdate" class="pill">--</span></div>
+  </section>
+
+  <section id="view-can" class="view">
+    <h1>CAN 驱动</h1><div class="sub">状态、故障、位置、驱动器参数；命令走 WebUI /command 接口</div>
+    <div class="row">
+      <button class="primary" onclick="canCmd('$CANStatus')">总线状态</button>
+      <button onclick="canCmd('$CANFaults')">故障/使能</button>
+      <button onclick="canCmd('$CANPos')">位置</button>
+      <button onclick="canCmd('$CANDriverInfo')">驱动参数</button>
+      <button onclick="canCmd('$CANScan')">扫描总线</button>
+      <button onclick="canCmd('$CANAutoConfig')">自动配置</button>
+      <button class="warn" onclick="canCmd('$CANReset')">复位驱动</button>
+      <button onclick="canCmd('$CANLog')">切换 CAN 日志</button>
+    </div>
+    <div class="split">
+      <pre id="canOut">--</pre>
+      <div class="card"><h3>快捷命令</h3><div class="row"><button onclick="canCmd('$CANSweep')">CANSweep</button><button onclick="canCmd('$CANEchoOn')">EchoOn</button><button onclick="canCmd('$CANStop')">Stop</button><button onclick="canCmd('$CANClear')">Clear</button></div><div class="sub">CAN 日志默认关闭，测试时用 $CANLog 打开，结束后再关闭。</div></div>
+    </div>
+  </section>
+
+  <section id="view-control" class="view">
+    <h1>运动控制</h1><div class="sub">点动、回零、解锁；状态异常时先解锁</div>
+    <div class="card">
+      <div class="row">
+        <label>轴</label><select id="jogAxis"><option>X</option><option>Y</option><option>Z</option></select>
+        <label>距离 mm</label><input id="jogDist" value="1" style="width:90px">
+        <label>进给 mm/min</label><input id="jogFeed" value="500" style="width:100px">
+        <button class="primary" onclick="jog(1)">正向点动</button><button onclick="jog(-1)">反向点动</button>
+      </div>
+      <div class="row">
+        <button onclick="sendCmd('$X')">解锁 $X</button>
+        <button onclick="sendCmd('$H')">回零 $H</button>
+        <button onclick="sendCmd('$ME')">全部使能 $ME</button>
+        <button class="warn" onclick="sendCmd('$MD')">全部失能 $MD</button>
+        <button onclick="sendCmd('?')">查询状态 ?</button>
+      </div>
+      <div class="row"><label>任意命令</label><input id="quickCmd" style="flex:1" placeholder="$J=G91X1F500、$H、$X ..."><button onclick="sendQuick()">发送</button></div>
+    </div>
+    <h2>输出</h2><pre id="ctrlOut">--</pre>
+  </section>
+
+  <section id="view-config" class="view">
+    <h1>配置</h1><div class="sub">读取/编辑 config.yaml；上传前本地做 YAML 语法检查，上传后需重启</div>
+    <div class="row"><button class="primary" onclick="loadConfig()">读取配置</button><button onclick="saveConfig()">上传配置</button><button onclick="sendCmd('[ESP444]RESTART')">重启控制器</button><span id="cfgMsg" class="pill">--</span></div>
+    <textarea id="configText" class="code" spellcheck="false">点击“读取配置”</textarea>
+  </section>
+
+  <section id="view-install" class="view">
+    <h1>固件安装</h1><div class="sub">远程版本 OTA、网络 OTA、串口 esptool、以及适配本固件的 fluid-installer</div>
+    <div class="card">
+      <h3>远程仓库 OTA（GitHub Release）</h3>
+      <div class="sub">只列出带版本号的 Release（can-vX.Y.Z），下载 firmware.bin 后通过 /updatefw 升级。</div>
+      <div class="row">
+        <button class="primary" onclick="refreshRemote()">获取版本列表</button>
+        <select id="remoteRelease" style="min-width:320px"><option value="">先获取版本</option></select>
+        <button class="primary" onclick="remoteOta()">OTA 到当前设备</button>
+        <span id="remoteMsg" class="pill">--</span>
+      </div>
+      <pre id="remoteOut">--</pre>
+    </div>
+    <div class="split">
+      <div class="card"><h3>网络 OTA（本地文件）</h3><div class="sub">设备需在线；上传到 /updatefw，完成后自动重启。</div><input type="file" id="otaFile" accept=".bin"><div class="row"><button class="primary" onclick="otaUpload()">上传固件</button></div><pre id="otaOut">--</pre></div>
+      <div class="card"><h3>串口烧录</h3><div class="sub">使用 esptool 写 firmware.factory.bin 到 0x0。</div><div class="row"><label>COM</label><input id="flashPort" placeholder="COM5" style="width:110px"><label>波特</label><input id="flashBaud" value="460800" style="width:100px"></div><div class="row"><button class="primary" onclick="flashSerial()">串口烧录</button></div><pre id="flashOut">--</pre></div>
+    </div>
+    <h2>fluid-installer</h2>
+    <div class="card"><div class="sub">已适配本仓库的 CAN 固件 manifest；浏览器需要 Web Serial（Chrome/Edge）。</div><div class="row"><button class="primary" onclick="window.open('/installer/','_blank')">打开 fluid-installer</button><button onclick="loadFirmware()">查看固件文件</button></div><pre id="fwFiles">--</pre></div>
+  </section>
+
+  <section id="view-console" class="view">
+    <h1>控制台</h1><div class="sub">直接发送 FluidNC 命令；同时可查看串口输出</div>
+    <div class="row"><input id="consoleCmd" style="flex:1" placeholder="输入命令，例如 $I、$CANPos、$J=G91X1F500"><button class="primary" onclick="sendConsole()">发送</button><button onclick="clearLog()">清空</button></div>
+    <div id="consoleLog" class="log"></div>
+  </section>
+</main>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+let connected = false;
+function log(msg, cls='') { const el=$('consoleLog'); const d=document.createElement('div'); d.className=cls; d.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`; el.appendChild(d); el.scrollTop=el.scrollHeight; }
+function showView(name){ document.querySelectorAll('.view').forEach(v=>v.classList.remove('active')); document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.view===name)); $('view-'+name).classList.add('active'); }
+async function api(path, opts={}) { const r=await fetch('/api'+path,{headers:{'Content-Type':'application/json'},...opts}); const t=await r.text(); let j; try{j=JSON.parse(t)}catch{j={raw:t}} if(!r.ok) throw new Error(j.error||t); return j; }
+function setConn(ok,text){ connected=ok; const p=$('connPill'); p.textContent=text||(ok?'已连接':'未连接'); p.className='pill '+(ok?'ok':'bad'); }
+async function connectDevice(){ const url=$('deviceUrl').value; try{ log('连接 '+url); const j=await api('/connect',{method:'POST',body:JSON.stringify({url})}); setConn(j.connected, j.connected?'已连接 '+j.base:'连接失败'); log(JSON.stringify(j), j.connected?'ok':'err'); if(j.connected) refreshAll(); }catch(e){ setConn(false,'连接失败'); log(String(e),'err'); } }
+function kv(el, rows){ el.innerHTML = rows.map(([k,v])=>`<div class="kv"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join(''); }
+function esc(s){ return String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function pick(text,re,def='--'){ const m=String(text||'').match(re); return m?m[1]:def; }
+function parseState(s){ if(!s) return '--'; return s.trim().split('\n')[0].replace(/^<|>$/g,''); }
+function driverRows(can){ const pos=can.positions||'', faults=can.faults||''; const m=new Map(); for(const line of pos.split('\n')){ const x=line.match(/address\s+(\d+):.*pos=(-?\d+).*error=(-?\d+).*speed=(-?\d+)RPM.*in-position=(\w+)/); if(x){ m.set(x[1],{addr:x[1],pos:x[2],err:x[3],speed:x[4],inpos:x[5]}); } } for(const line of faults.split('\n')){ const x=line.match(/address\s+(\d+):.*fw V([\d.]+).*status=(\w+).*stall=(\w+).*enabled=(\w+).*in-position=(\w+)/); if(x){ const d=m.get(x[1])||{addr:x[1]}; Object.assign(d,{fw:x[2],status:x[3],stall:x[4],enabled:x[5],inpos:x[6]}); m.set(x[1],d); } } return [...m.values()].sort((a,b)=>a.addr-b.addr); }
+function renderDrivers(can){ const rows=driverRows(can); const tb=$('driverTable'); if(!rows.length){tb.innerHTML='<tr><td colspan="9" class="muted">未读到驱动器，检查 CAN 日志/总线</td></tr>';return;} tb.innerHTML=rows.map(d=>`<tr><td class="mono">${d.addr}</td><td>${esc(d.fw||'--')}</td><td class="mono">${esc(d.pos||'--')}</td><td class="mono">${esc(d.err||'--')}</td><td class="mono">${esc(d.speed||'--')}</td><td>${esc(d.status||'--')}</td><td class="${d.stall==='yes'?'badtxt':'oktxt'}">${esc(d.stall||'--')}</td><td class="${d.enabled==='yes'?'oktxt':'warntxt'}">${esc(d.enabled||'--')}</td><td>${esc(d.inpos||'--')}</td></tr>`).join(''); }
+async function refreshAll(){ try{ const [s,c]=await Promise.all([api('/status'),api('/can')]); const build=s.build||''; const ver=pick(build,/FluidNC v([^\s]+)/,'--'); const mcu=pick(build,/(esp32[\w-]*)/i,'--'); const st=parseState(s.state); const stateName=st.split('|')[0]||'--'; const mpos=(st.match(/MPos:([^|]+)/)||[])[1]||'--'; kv($('fwBox'),[['版本',ver],['MCU',mcu],['设备',s.base]]); kv($('stateBox'),[['状态',stateName],['MPos',mpos],['更新时间',new Date().toLocaleTimeString()]]); const cs=c.status||''; kv($('canBox'),[['状态',pick(cs,/state=(\w+)/,'--')],['TX错误',pick(cs,/tx_err=(\d+)/,'--')],['RX错误',pick(cs,/rx_err=(\d+)/,'--')],['BUS错误',pick(cs,/bus_errors=(\d+)/,'--')]]); const rows=driverRows(c); kv($('drvBox'),[['在线',`${rows.length}/4`],['使能',`${rows.filter(r=>r.enabled==='yes').length}/4`]]); renderDrivers(c); $('lastUpdate').textContent='更新 '+new Date().toLocaleTimeString(); log('刷新完成', 'ok'); }catch(e){ log(String(e),'err'); setConn(false,'读取失败'); } }
+async function refreshCan(){ try{ const c=await api('/can'); $('canOut').textContent=(c.status||'')+'\n'+(c.faults||'')+'\n'+(c.positions||'')+'\n'+(c.drivers||''); renderDrivers(c); const rows=driverRows(c); kv($('canBox'),[['状态',pick(c.status,/state=(\w+)/,'--')],['TX错误',pick(c.status,/tx_err=(\d+)/,'--')],['RX错误',pick(c.status,/rx_err=(\d+)/,'--')],['BUS错误',pick(c.status,/bus_errors=(\d+)/,'--')]]); kv($('drvBox'),[['在线',`${rows.length}/4`],['使能',`${rows.filter(r=>r.enabled==='yes').length}/4`]]); log('CAN 刷新完成','ok'); }catch(e){ log(String(e),'err'); } }
+async function canCmd(cmd){ try{ const j=await api('/command',{method:'POST',body:JSON.stringify({command:cmd})}); $('canOut').textContent=`> ${cmd}\n${j.output}`; log(cmd,'in'); log(j.output||'(无输出)'); }catch(e){ $('canOut').textContent='错误: '+e; log(String(e),'err'); } }
+async function sendCmd(cmd){ try{ const j=await api('/command',{method:'POST',body:JSON.stringify({command:cmd})}); $('ctrlOut').textContent=`> ${cmd}\n${j.output}`; log(cmd,'in'); log(j.output||'(无输出)'); if(cmd==='?'||cmd.startsWith('$X')||cmd.startsWith('$H')) refreshAll(); }catch(e){ $('ctrlOut').textContent='错误: '+e; log(String(e),'err'); } }
+function jog(dir){ const a=$('jogAxis').value,d=parseFloat($('jogDist').value)||1,f=parseFloat($('jogFeed').value)||500; const cmd=`$J=G91${a}${dir*d}F${f}`; sendCmd(cmd); }
+function sendQuick(){ const c=$('quickCmd').value.trim(); if(c) sendCmd(c); }
+async function loadConfig(){ try{ $('cfgMsg').textContent='读取中...'; const j=await api('/config'); $('configText').value=j.yaml; $('cfgMsg').textContent='已读取 '+j.yaml.length+' 字节'; log('配置已读取','ok'); }catch(e){ $('cfgMsg').textContent='读取失败'; log(String(e),'err'); } }
+async function saveConfig(){ try{ const yaml=$('configText').value; $('cfgMsg').textContent='上传中...'; const j=await api('/config',{method:'PUT',body:JSON.stringify({yaml})}); $('cfgMsg').textContent='上传成功，请重启'; log('配置上传: '+JSON.stringify(j),'ok'); }catch(e){ $('cfgMsg').textContent='上传失败'; log(String(e),'err'); } }
+async function refreshPorts(){ try{ const j=await api('/ports'); const sel=$('serialPorts'); sel.innerHTML='<option value="">串口...</option>'+j.ports.map(p=>`<option value="${esc(p.name)}">${esc(p.name)}</option>`).join(''); log('串口: '+j.ports.map(p=>p.name).join(', ')); }catch(e){ log(String(e),'err'); } }
+async function openSerial(){ const port=$('serialPorts').value; if(!port){log('先选择串口','err');return;} try{ const j=await api('/serial/open',{method:'POST',body:JSON.stringify({port,baud:115200})}); log('串口已打开 '+JSON.stringify(j),'ok'); startSerialPoll(); }catch(e){ log(String(e),'err'); } }
+let serialTimer=null;
+function startSerialPoll(){ if(serialTimer) clearInterval(serialTimer); let last=0; serialTimer=setInterval(async()=>{ try{ const j=await api('/serial/log'); const lines=j.log||[]; if(lines.length!==last){ for(const l of lines.slice(last)) log(l); last=lines.length; } }catch(e){} },800); }
+async function sendConsole(){ const c=$('consoleCmd').value.trim(); if(!c)return; log('> '+c,'in'); try{ const j=await api('/command',{method:'POST',body:JSON.stringify({command:c})}); log(j.output||'(无输出)'); }catch(e){ log(String(e),'err'); } }
+function clearLog(){ $('consoleLog').innerHTML=''; }
+async function refreshRemote(){ try{ $('remoteMsg').textContent='读取 GitHub...'; const j=await api('/updates'); const rel=j.releases||[]; const sel=$('remoteRelease'); sel.innerHTML=rel.length?rel.map(r=>`<option value="${esc(r.tag)}">${esc(r.version)} · ${esc(r.name)} · ${esc(r.published_at.slice(0,10))}</option>`).join(''):'<option value="">没有符合 can-vX.Y.Z 的版本</option>'; $('remoteMsg').textContent=`${rel.length} 个版本`; $('remoteOut').textContent=JSON.stringify(rel,null,2); log(`远程版本: ${rel.length} 个`, rel.length?'ok':'err'); }catch(e){ $('remoteMsg').textContent='读取失败'; $('remoteOut').textContent='错误: '+e; log(String(e),'err'); } }
+async function remoteOta(){ const tag=$('remoteRelease').value; if(!tag){ log('先获取并选择版本','err'); return; } $('remoteMsg').textContent='下载并 OTA...'; $('remoteOut').textContent=`正在从 GitHub 下载 ${tag} 并上传到设备...`; try{ const j=await api('/ota/remote',{method:'POST',body:JSON.stringify({tag})}); $('remoteOut').textContent=JSON.stringify(j,null,2); $('remoteMsg').textContent='OTA 已提交'; log(`远程 OTA ${j.version}: HTTP ${j.ota?.http}`, 'ok'); }catch(e){ $('remoteMsg').textContent='OTA 失败'; $('remoteOut').textContent='错误: '+e; log(String(e),'err'); } }
+async function loadFirmware(){ try{ const j=await api('/firmware'); $('fwFiles').textContent=JSON.stringify(j,null,2); }catch(e){ log(String(e),'err'); } }
+async function otaUpload(){ const f=$('otaFile').files[0]; if(!f){ log('选择 .bin 固件','err'); return; } const fd=new FormData(); fd.append('firmware',f); $('otaOut').textContent='上传中...'; try{ const r=await fetch('/api/install/ota',{method:'POST',body:fd}); const j=await r.json(); $('otaOut').textContent=JSON.stringify(j,null,2); log('OTA 返回: '+JSON.stringify(j), r.ok?'ok':'err'); }catch(e){ $('otaOut').textContent='错误: '+e; log(String(e),'err'); } }
+async function flashSerial(){ const port=$('flashPort').value.trim(); const baud=parseInt($('flashBaud').value)||460800; if(!port){ log('输入 COM 口','err'); return; } $('flashOut').textContent='烧录中...'; try{ const j=await api('/install/flash',{method:'POST',body:JSON.stringify({port,baud})}); $('flashOut').textContent=JSON.stringify(j,null,2); log('串口烧录: '+(j.ok?'成功':'失败'), j.ok?'ok':'err'); }catch(e){ $('flashOut').textContent='错误: '+e; log(String(e),'err'); } }
+setInterval(()=>{$('clock').textContent=new Date().toLocaleString()},1000);
+refreshPorts();
+log('FluidCAN Studio 已启动，先连接控制器。');
+setTimeout(connectDevice, 500);
+</script>
+</body>
+</html>
+
+

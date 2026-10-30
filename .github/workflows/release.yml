@@ -1,0 +1,120 @@
+name: FluidCAN Studio release
+
+on:
+  push:
+    tags:
+      - "studio-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, e.g. studio-v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            bundles: nsis
+            artifact: windows-x64
+          - os: ubuntu-24.04
+            bundles: deb,rpm,appimage
+            artifact: linux-x64
+          - os: ubuntu-24.04-arm
+            bundles: deb,rpm,appimage
+            artifact: linux-arm64
+          - os: macos-13
+            bundles: dmg
+            artifact: macos-x64
+          - os: macos-14
+            bundles: dmg
+            artifact: macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then VERSION="${GITHUB_REF_NAME}"; fi
+          if [[ "$VERSION" != studio-v* ]]; then
+            echo "::error::Version must look like studio-vX.Y.Z"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "plain=${VERSION#studio-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set app version
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          v = os.environ["VERSION"].removeprefix("studio-v")
+          p = "tauri.conf.json"
+          d = json.load(open(p, encoding="utf-8"))
+          d["version"] = v
+          json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+          PY
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential curl wget file patchelf \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev libfuse2 rpm
+
+      - name: Install Tauri CLI
+        run: npm install --global @tauri-apps/cli@latest
+
+      - name: Build bundles
+        run: tauri build --bundles ${{ matrix.bundles }}
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p out
+          if [ -d target/release/bundle ]; then cp -R target/release/bundle/. out/; fi
+          if [ -f target/release/fluidcan-studio.exe ]; then cp target/release/fluidcan-studio.exe out/FluidCAN-Studio-portable.exe; fi
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: out/**
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: FluidCAN Studio ${{ github.ref_name }}
+          body: |
+            FluidCAN Studio desktop release.
+            - Windows NSIS installer + portable exe
+            - Linux deb/rpm/AppImage (x64 + arm64)
+            - macOS dmg (x64 + arm64)
+          files: artifacts/**/*
+          draft: false
+          prerelease: false
+          make_latest: true

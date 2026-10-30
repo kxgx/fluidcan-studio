@@ -1,0 +1,5 @@
+target/
+installer-src/node_modules/
+installer-src/.parcel-cache/
+installer-src/dist/
+
