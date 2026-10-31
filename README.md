@@ -204,6 +204,31 @@ GET /api/scan
 
 前端启动时自动扫描；扫描到一台时自动连接；多台时通过下拉框选择。
 
+
+## I2C / OLED 说明
+
+当前 `wifi_s3` 固件：
+
+- **已编译 I2C 总线驱动**：
+  - `FluidNC/src/Machine/I2CBus.cpp`
+  - `FluidNC/esp32/i2c.cpp`
+- 配置中有 `i2c0`：
+  - SDA `gpio.8`
+  - SCL `gpio.9`
+  - 频率 `100000`
+- 启动实际日志：
+  - `I2C SDA: gpio.8, SCL: gpio.9, Freq: 100000, Bus #: 0`
+  - `I2C bus 0 init OK`
+
+但 **OLED 显示模块没有编译进当前固件**：
+
+- `common_esp32s3` 明确排除了 `esp32/OLED.cpp`
+- 当前 `wifi_s3` 不包含 SSD1306/OLED 显示驱动
+- 因此 `config.yaml` 中的 `oled:` 段已移除
+- 设备上如果还看到 `Ignored key oled`，说明控制器里残留旧配置，可重新上传当前 `CAN-4motor-config/config.yaml` 清掉
+
+如果确实要接 OLED，需要单独构建带 `OLED.cpp` 的 ESP32-S3 环境，例如 `platformio_override.ini` 中的 `wifi_s3_octalPSRAM_oled`，或者新建一个继承 `wifi_s3` 并追加 `+<../esp32/OLED.cpp>` 的环境。当前 CAN 固件不包含显示功能。
+
 ## 环境变量
 
 | 变量 | 默认 | 说明 |
