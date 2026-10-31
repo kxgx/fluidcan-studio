@@ -207,28 +207,15 @@ GET /api/scan
 
 ## I2C / OLED 说明
 
-当前 `wifi_s3` 固件：
+- `wifi_s3` 标准固件：已编译 I2C 总线驱动，但不包含 OLED 显示模块
+- `wifi_s3_oled` 固件：在 `wifi_s3` 基础上加入 `esp32/OLED.cpp`，用于 OLED 版本
+- 硬件配置：
+  - I2C0：SDA `gpio.8`，SCL `gpio.9`，100 kHz
+  - OLED：地址 `0x3C`（60），128×64
+- 远程 Release `can-v0.1.1` 起使用 `wifi_s3_oled` 构建，`can-v0.1.2` 修复了 `$I2CScan` 的 ACK 判断\n- `$I2CScan` 现在同时做硬件 I2C 和 bit-bang 扫描（含 SDA/SCL 交换），便于区分固件和硬件问题
+- 配置中的 `oled:` 段和 `i2c0:` 段必须同时存在，否则 OLED 不会初始化
 
-- **已编译 I2C 总线驱动**：
-  - `FluidNC/src/Machine/I2CBus.cpp`
-  - `FluidNC/esp32/i2c.cpp`
-- 配置中有 `i2c0`：
-  - SDA `gpio.8`
-  - SCL `gpio.9`
-  - 频率 `100000`
-- 启动实际日志：
-  - `I2C SDA: gpio.8, SCL: gpio.9, Freq: 100000, Bus #: 0`
-  - `I2C bus 0 init OK`
-
-但 **OLED 显示模块没有编译进当前固件**：
-
-- `common_esp32s3` 明确排除了 `esp32/OLED.cpp`
-- 当前 `wifi_s3` 不包含 SSD1306/OLED 显示驱动
-- 因此 `config.yaml` 中的 `oled:` 段已移除
-- 设备上如果还看到 `Ignored key oled`，说明控制器里残留旧配置，可重新上传当前 `CAN-4motor-config/config.yaml` 清掉
-
-如果确实要接 OLED，需要单独构建带 `OLED.cpp` 的 ESP32-S3 环境，例如 `platformio_override.ini` 中的 `wifi_s3_octalPSRAM_oled`，或者新建一个继承 `wifi_s3` 并追加 `+<../esp32/OLED.cpp>` 的环境。当前 CAN 固件不包含显示功能。
-
+如果屏幕不亮，优先检查 IO8/9 接线、模块供电、I2C 地址和 `$I2CScan` 结果。
 ## 环境变量
 
 | 变量 | 默认 | 说明 |
@@ -257,3 +244,5 @@ GET /api/scan
 - 设备未接 CAN 驱动器时显示 `no devices` 是正常的。
 - fluid-installer 的 Web Serial 烧录需要 Chrome/Edge，并且设备通过 USB 连接。
 - GUI、Web、Android 共用同一套功能和后端，不做功能拆分。
+
+
