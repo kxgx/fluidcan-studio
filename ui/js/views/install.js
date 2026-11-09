@@ -1,30 +1,85 @@
 import { httpGet, httpPost } from "../core/transport.js";
+import { state } from "../core/store.js";
 
 const $ = (id) => document.getElementById(id);
+const FOUR_MB = new Set([
+  "nopsram-oled-usb-4mb",
+  "quad-oled-usb-4mb",
+  "octal-oled-usb-4mb",
+]);
+
+function variant() {
+  return $("firmwareVariant")?.value || "default";
+}
+
+function isFourMb() {
+  return FOUR_MB.has(variant());
+}
+
+function currentTag() {
+  const m = String(state.build || "").match(/FluidNC\s+(can-v\d+\.\d+\.\d+[-\w.]*)/);
+  return m ? m[1].replace(/-dirty$/, "") : "";
+}
+
+export function updateVariantState() {
+  const button = $("remoteOtaBtn");
+  const warn = $("variantWarn");
+  const four = isFourMb();
+  if (button) button.disabled = four;
+  if (warn) {
+    warn.textContent = four
+      ? "当前选择为 4 MB 版本：没有 OTA 备用分区，不能网络 OTA，请使用串口烧录。"
+      : "当前选择为 8 MB 版本：支持网络 OTA。";
+    warn.className = four ? "sub badtxt" : "sub muted";
+  }
+}
 
 export async function refreshRemote() {
   $("remoteMsg").textContent = "读取 GitHub...";
   const j = await httpGet("/updates");
   const releases = j.releases || [];
   const select = $("remoteRelease");
-  select.innerHTML = releases.length
-    ? releases
-        .map(
-          (r) =>
-            `<option value="${esc(r.tag)}">${esc(r.version)} · ${esc(r.name)} · ${esc(String(r.published_at).slice(0, 10))}</option>`,
-        )
-        .join("")
-    : '<option value="">没有可用版本</option>';
+  const installed = currentTag();
+  const groups = new Map();
+
+  for (const release of releases) {
+    const family = (release.tag.match(/can-v(\d+\.\d+)/) || [])[1] || "其他";
+    if (!groups.has(family)) groups.set(family, []);
+    groups.get(family).push(release);
+  }
+
+  const options = [];
+  for (const [family, items] of groups) {
+    options.push(`<optgroup label="can-v${esc(family)} 系列">`);
+    for (const release of items) {
+      const markers = [];
+      if (release.tag === installed) markers.push("当前");
+      if (release.prerelease) markers.push("预发布");
+      const label = `${release.tag}${markers.length ? " · " + markers.join(" · ") : ""}`;
+      options.push(`<option value="${esc(release.tag)}">${esc(label)}</option>`);
+    }
+    options.push("</optgroup>");
+  }
+
+  select.innerHTML = options.length ? options.join("") : '<option value="">没有可用版本</option>';
+  if (installed && releases.some((r) => r.tag === installed)) select.value = installed;
+
   $("remoteMsg").textContent = `${releases.length} 个版本`;
-  $("remoteOut").textContent = JSON.stringify(releases, null, 2);
+  $("remoteOut").textContent = JSON.stringify(
+    { current: installed, variant: variant(), releases },
+    null,
+    2,
+  );
+  updateVariantState();
   return releases;
 }
 
 export async function remoteOta() {
+  if (isFourMb()) throw new Error("4 MB 版本不能网络 OTA，请使用串口烧录");
   const tag = $("remoteRelease").value;
   if (!tag) throw new Error("先获取并选择版本");
   $("remoteMsg").textContent = "下载并 OTA...";
-  const j = await httpPost("/ota/remote", { tag });
+  const j = await httpPost("/ota/remote", { tag, variant: variant() });
   $("remoteOut").textContent = JSON.stringify(j, null, 2);
   $("remoteMsg").textContent = "OTA 已提交";
   return j;
@@ -61,3 +116,8 @@ export async function loadFirmware() {
 function esc(value) {
   return String(value ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 }
+
+document.addEventListener("DOMContentLoaded", () => {
+  $("firmwareVariant")?.addEventListener("change", updateVariantState);
+  updateVariantState();
+});

@@ -90,6 +90,7 @@ struct FlashReq {
 #[derive(Deserialize)]
 struct RemoteOtaReq {
     tag: String,
+    variant: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -725,6 +726,19 @@ async fn fetch_remote_releases() -> Result<Vec<RemoteRelease>, String> {
     }
 }
 
+fn ota_asset_name(variant: &str) -> String {
+    if variant.is_empty() || variant == "default" {
+        "firmware.bin".to_string()
+    } else {
+        format!("{variant}-firmware.bin")
+    }
+}
+
+fn variant_is_4mb(variant: &str) -> bool {
+    let v = variant.to_ascii_lowercase();
+    v.contains("4mb") || v.contains("nopsram")
+}
+
 async fn remote_ota(
     State(st): State<Arc<AppState>>,
     Json(req): Json<RemoteOtaReq>,
@@ -736,12 +750,27 @@ async fn remote_ota(
         .into_iter()
         .find(|r| r.tag == req.tag)
         .ok_or_else(|| err(format!("找不到版本 {}", req.tag)))?;
+    let variant = req.variant.unwrap_or_else(|| "default".to_string());
+    if variant_is_4mb(&variant) {
+        return Err(err(format!(
+            "{} 是 4 MB 单 app 分区版本，不能网络 OTA；请使用串口烧录",
+            variant
+        )));
+    }
+    let asset_name = ota_asset_name(&variant);
     let asset_url = release
         .assets
         .iter()
-        .find(|a| a.name == "firmware.bin")
+        .find(|a| a.name == asset_name)
         .map(|a| a.url.clone())
-        .unwrap_or_else(|| format!("https://github.com/{GITHUB_REPO}/releases/download/{}/firmware.bin", release.tag));
+        .unwrap_or_else(|| {
+            // The releases.atom fallback has no asset list; construct the
+            // variant URL and let the download verify that it exists.
+            format!(
+                "https://github.com/{GITHUB_REPO}/releases/download/{}/{}",
+                release.tag, asset_name
+            )
+        });
     let resp = reqwest::Client::new()
         .get(&asset_url)
         .header(reqwest::header::USER_AGENT, "FluidCAN-Studio")
@@ -767,7 +796,8 @@ async fn remote_ota(
     Ok(Json(json!({
         "version": release.version,
         "tag": release.tag,
-        "asset": "firmware.bin",
+        "asset": asset_name,
+        "variant": variant,
         "ota": result,
     })))
 }
