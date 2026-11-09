@@ -96,8 +96,8 @@
       <div class="sub">按固件仓库版本和硬件分类选择；4 MB 单 app 分区版本不能网络 OTA，只能串口烧录。</div>
       <div class="row">
         <button class="primary" onclick="refreshRemote()">获取版本列表</button>
-        <select id="remoteRelease" style="min-width:320px"><option value="">先获取版本</option></select>
-        <select id="firmwareVariant" style="min-width:330px">
+        <select id="remoteRelease" style="min-width:320px" disabled><option value="">先获取版本</option></select>
+        <select id="firmwareVariant" style="min-width:330px" disabled>
           <optgroup label="4 MB Flash（不能网络 OTA）">
             <option value="nopsram-oled-usb-4mb" selected>nopsram-oled-usb-4mb · 本机 N4 无 PSRAM OLED USB</option>
             <option value="quad-oled-usb-4mb">quad-oled-usb-4mb · 4 MB Quad PSRAM OLED USB</option>

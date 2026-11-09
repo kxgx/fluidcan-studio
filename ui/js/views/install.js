@@ -2,6 +2,7 @@ import { httpGet, httpPost } from "../core/transport.js";
 import { state } from "../core/store.js";
 
 const $ = (id) => document.getElementById(id);
+let releasesLoaded = false;
 const FOUR_MB = new Set([
   "nopsram-oled-usb-4mb",
   "quad-oled-usb-4mb",
@@ -24,8 +25,12 @@ function currentTag() {
 export function updateVariantState() {
   const button = $("remoteOtaBtn");
   const warn = $("variantWarn");
+  const variantSelect = $("firmwareVariant");
+  const releaseSelect = $("remoteRelease");
   const four = isFourMb();
-  if (button) button.disabled = four;
+  if (variantSelect) variantSelect.disabled = !releasesLoaded;
+  if (releaseSelect) releaseSelect.disabled = !releasesLoaded;
+  if (button) button.disabled = !releasesLoaded || four;
   if (warn) {
     warn.textContent = four
       ? "当前选择为 4 MB 版本：没有 OTA 备用分区，不能网络 OTA，请使用串口烧录。"
@@ -64,7 +69,8 @@ export async function refreshRemote() {
   select.innerHTML = options.length ? options.join("") : '<option value="">没有可用版本</option>';
   if (installed && releases.some((r) => r.tag === installed)) select.value = installed;
 
-  $("remoteMsg").textContent = `${releases.length} 个版本`;
+  releasesLoaded = releases.length > 0;
+  $("remoteMsg").textContent = releasesLoaded ? `${releases.length} 个版本` : "没有可用版本";
   $("remoteOut").textContent = JSON.stringify(
     { current: installed, variant: variant(), releases },
     null,
@@ -75,6 +81,7 @@ export async function refreshRemote() {
 }
 
 export async function remoteOta() {
+  if (!releasesLoaded) throw new Error("先获取版本列表");
   if (isFourMb()) throw new Error("4 MB 版本不能网络 OTA，请使用串口烧录");
   const tag = $("remoteRelease").value;
   if (!tag) throw new Error("先获取并选择版本");
