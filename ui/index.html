@@ -122,7 +122,7 @@
     </div>
     <div class="split">
       <div class="card"><h3>网络 OTA（本地文件）</h3><div class="sub">设备需在线；上传到 /updatefw，完成后自动重启。</div><input type="file" id="otaFile" accept=".bin"><div class="row"><button class="primary" onclick="otaUpload()">上传固件</button></div><pre id="otaOut">--</pre></div>
-      <div class="card"><h3>串口烧录</h3><div class="sub">使用 esptool 写 firmware.factory.bin 到 0x0。</div><div class="row"><label>COM</label><input id="flashPort" placeholder="COM5" style="width:110px"><label>波特</label><input id="flashBaud" value="460800" style="width:100px"></div><div class="row"><button class="primary" onclick="flashSerial()">串口烧录</button></div><pre id="flashOut">--</pre></div>
+      <div class="card"><h3>串口烧录</h3><div class="sub">使用 esptool 写 firmware.factory.bin 到 0x0。</div><div class="row"><label>COM</label><select id="flashPort" style="width:150px"><option value="">串口...</option></select><button onclick="refreshPorts()">刷新</button><label>波特</label><input id="flashBaud" value="460800" style="width:100px"></div><div class="row"><button class="primary" onclick="flashSerial()">串口烧录</button></div><pre id="flashOut">--</pre></div>
     </div>
     <h2>fluid-installer</h2>
     <div class="card"><div class="sub">已适配本仓库的 CAN 固件 manifest；浏览器需要 Web Serial（Chrome/Edge）。</div><div class="row"><button class="primary" onclick="window.open('/installer/','_blank')">打开 fluid-installer</button><button onclick="loadFirmware()">查看固件文件</button></div><pre id="fwFiles">--</pre></div>

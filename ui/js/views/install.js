@@ -119,7 +119,7 @@ export async function otaUpload() {
 }
 
 export async function flashSerial() {
-  const port = $("flashPort").value.trim();
+  const port = ($("flashPort").value || $("serialPorts").value || "").trim();
   const baud = parseInt($("flashBaud").value, 10) || 460800;
   if (!port) throw new Error("输入 COM 口");
   $("flashOut").textContent = "烧录中...";

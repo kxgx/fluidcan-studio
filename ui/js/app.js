@@ -67,11 +67,19 @@ async function connectDevice() {
 async function refreshPorts() {
   try {
     const j = await transport.ports();
-    const select = $("serialPorts");
-    select.innerHTML =
+    const ports = j.ports || [];
+    const options =
       '<option value="">串口...</option>' +
-      (j.ports || []).map((p) => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join("");
-    log("串口: " + (j.ports || []).map((p) => p.name).join(", "));
+      ports.map((p) => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join("");
+    const top = $("serialPorts");
+    const flash = $("flashPort");
+    const topValue = top.value;
+    const flashValue = flash.value;
+    top.innerHTML = options;
+    flash.innerHTML = options;
+    if (topValue) top.value = topValue;
+    if (flashValue) flash.value = flashValue;
+    log("串口: " + ports.map((p) => p.name).join(", "));
   } catch (e) {
     log(String(e), "err");
   }
@@ -165,8 +173,12 @@ async function boot() {
     $("clock").textContent = new Date().toLocaleString();
   }, 1000);
   setConn(false, "未连接");
-  log("FluidCAN Studio 已启动：自动扫描设备，连接和串口打开由用户手动操作。");
+  log("FluidCAN Studio 已启动：自动扫描设备和串口，连接/打开串口由用户手动操作。");
   setTimeout(scanDevices, 600);
+  refreshPorts();
+  $("serialPorts")?.addEventListener("change", () => {
+    if ($("serialPorts").value) $("flashPort").value = $("serialPorts").value;
+  });
 }
 
 // Inline handlers in the static HTML call these names, so publish the
