@@ -32,6 +32,8 @@ struct FirmwareAssets;
 #[folder = "ui/"]
 struct UiAssets;
 
+include!(concat!(env!("OUT_DIR"), "/toolchain_versions.rs"));
+
 const DEFAULT_DEVICE: &str = "";
 const DEFAULT_PORT: u16 = 8088;
 const RELEASE_NAME: &str = "fluidcan-pcb5";
@@ -153,6 +155,17 @@ async fn device_command(
 
 async fn current_base(state: &AppState) -> String {
     state.base.read().await.clone()
+}
+
+async fn toolchain_info() -> Json<Value> {
+    Json(json!({
+        "esptool": BUILD_ESPTOOL_VERSION,
+        "esp_idf": BUILD_ESP_IDF_VERSION,
+        "esptool_windows_url": BUILD_ESPTOOL_WINDOWS_URL,
+        "esptool_versions": BUILD_ESPTOOL_VERSIONS,
+        "esp_idf_versions": BUILD_ESP_IDF_VERSIONS,
+        "source": "official Espressif release metadata (build time)",
+    }))
 }
 
 async fn health(State(st): State<Arc<AppState>>) -> Json<Value> {
@@ -1014,6 +1027,7 @@ async fn web_auth(State(st): State<Arc<AppState>>, req: Request, next: Next) -> 
 fn build_router(state: Arc<AppState>) -> Router {
     let api = Router::new()
         .route("/health", get(health))
+        .route("/toolchain", get(toolchain_info))
         .route("/connect", post(connect))
         .route("/status", get(get_status))
         .route("/can", get(get_can))

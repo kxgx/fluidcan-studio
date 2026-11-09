@@ -128,6 +128,23 @@ export async function flashSerial() {
   return j;
 }
 
+export async function loadToolchain() {
+  const j = await httpGet("/toolchain");
+  const box = $("toolchainBox");
+  if (!box) return j;
+  const rows = [
+    ["官方 esptool", j.esptool || "--"],
+    ["官方 ESP-IDF", j.esp_idf || "--"],
+    ["esptool 版本", (j.esptool_versions || []).join(", ") || "--"],
+    ["ESP-IDF 版本", (j.esp_idf_versions || []).join(", ") || "--"],
+    ["来源", j.source || "--"],
+  ];
+  box.innerHTML = rows
+    .map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><b>${esc(v)}</b></div>`)
+    .join("");
+  return j;
+}
+
 export async function loadFirmware() {
   const j = await httpGet("/firmware");
   $("fwFiles").textContent = JSON.stringify(j, null, 2);
@@ -141,4 +158,5 @@ function esc(value) {
 document.addEventListener("DOMContentLoaded", () => {
   $("firmwareVariant")?.addEventListener("change", updateVariantState);
   updateVariantState();
+  loadToolchain().catch(() => {});
 });

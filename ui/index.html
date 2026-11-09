@@ -92,6 +92,11 @@
   <section id="view-install" class="view">
     <h1>固件安装</h1><div class="sub">远程版本 OTA、网络 OTA、串口 esptool、以及适配本固件的 fluid-installer</div>
     <div class="card">
+      <h3>官方工具链（编译期自动读取）</h3>
+      <div class="sub">构建时从 Espressif 官方 Release 读取版本；官方发布后重新编译即可更新。</div>
+      <div id="toolchainBox" class="kvbox"><span>未读取</span></div>
+    </div>
+    <div class="card">
       <h3>远程仓库 OTA（GitHub Release）</h3>
       <div class="sub">按固件仓库版本和硬件分类选择；4 MB 单 app 分区版本不能网络 OTA，只能串口烧录。</div>
       <div class="row">
