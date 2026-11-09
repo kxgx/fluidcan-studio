@@ -204,6 +204,7 @@ Object.assign(window, {
   otaUpload: () => run("install", install.otaUpload),
   flashSerial: () => run("install", install.flashSerial),
   loadFirmware: () => run("install", install.loadFirmware),
+  installToolchain: () => run("install", install.installToolchain),
 });
 
 boot();

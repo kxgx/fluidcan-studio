@@ -81,6 +81,7 @@ fn main() {
     let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let platform_asset = platform_asset_suffix(&target_os, &target_arch);
     let mut esptool_platform_asset = platform_asset.unwrap_or("").to_string();
+    let mut esptool_platform_digest = String::new();
     let mut esptool_platform_url = platform_asset
         .map(|suffix| {
             format!(
@@ -106,6 +107,9 @@ fn main() {
                 if let Some(url) = asset.get("browser_download_url").and_then(Value::as_str) {
                     esptool_platform_url = url.to_string();
                 }
+                if let Some(digest) = asset.get("digest").and_then(Value::as_str) {
+                    esptool_platform_digest = digest.trim_start_matches("sha256:").to_string();
+                }
             }
         }
     }
@@ -125,6 +129,7 @@ fn main() {
          pub const BUILD_ESPTOOL_PLATFORM: &str = \"{target_os}/{target_arch}\";\n\
          pub const BUILD_ESPTOOL_ASSET: &str = \"{esptool_platform_asset}\";\n\
          pub const BUILD_ESPTOOL_PLATFORM_URL: &str = \"{esptool_platform_url}\";\n\
+         pub const BUILD_ESPTOOL_SHA256: &str = \"{esptool_platform_digest}\";\n\
          pub const BUILD_ESPTOOL_SUPPORTED: bool = {esptool_supported};\n\
          pub const BUILD_ESPTOOL_VERSIONS: &[&str] = &[{esptool_versions}];\n\
          pub const BUILD_ESP_IDF_VERSIONS: &[&str] = &[{idf_versions}];\n",

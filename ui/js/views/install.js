@@ -128,6 +128,14 @@ export async function flashSerial() {
   return j;
 }
 
+export async function installToolchain() {
+  $("toolchainMsg").textContent = "下载/解压中...";
+  const j = await httpPost("/toolchain/install", {});
+  $("toolchainMsg").textContent = j.ok ? "官方 esptool 已就绪" : "当前平台不支持";
+  $("remoteOut").textContent = JSON.stringify(j, null, 2);
+  return j;
+}
+
 export async function loadToolchain() {
   const j = await httpGet("/toolchain");
   const box = $("toolchainBox");

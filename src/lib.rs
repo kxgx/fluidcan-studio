@@ -2,7 +2,7 @@
 use std::{
     io::{Read, Write},
     net::{IpAddr, Ipv4Addr, UdpSocket},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -47,6 +47,7 @@ struct AppState {
     serial: Arc<Mutex<SerialState>>,
     serial_log: Arc<Mutex<Vec<String>>>,
     serial_exec_lock: Arc<tokio::sync::Mutex<()>>,
+    tool_lock: Arc<tokio::sync::Mutex<()>>,
     web_token: Option<String>,
 }
 
@@ -155,6 +156,19 @@ async fn device_command(
 
 async fn current_base(state: &AppState) -> String {
     state.base.read().await.clone()
+}
+
+async fn install_toolchain(State(st): State<Arc<AppState>>) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
+    let tool = ensure_official_esptool(&st)
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, Json(ApiError { error: e })))?;
+    Ok(Json(json!({
+        "ok": tool.is_some(),
+        "tool": tool.map(|p| p.to_string_lossy().to_string()),
+        "platform": BUILD_ESPTOOL_PLATFORM,
+        "version": BUILD_ESPTOOL_VERSION,
+        "asset": BUILD_ESPTOOL_ASSET,
+    })))
 }
 
 async fn toolchain_info() -> Json<Value> {
@@ -818,8 +832,130 @@ async fn remote_ota(
     })))
 }
 
+fn tool_base_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("FLUIDCAN_TOOL_DIR") {
+        if !dir.is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            if !local.is_empty() {
+                return PathBuf::from(local).join("FluidCAN Studio").join("tools");
+            }
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.is_empty() {
+            return PathBuf::from(home).join(".local/share/fluidcan-studio/tools");
+        }
+    }
+    std::env::temp_dir().join("fluidcan-studio-tools")
+}
+
+fn find_tool_binary(root: &Path) -> Option<PathBuf> {
+    let wanted = if cfg!(target_os = "windows") { "esptool.exe" } else { "esptool" };
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = std::fs::read_dir(&dir).ok()?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.file_name().and_then(|n| n.to_str()) == Some(wanted) {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+fn extract_esptool_archive(archive: &Path, target: &Path) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(target).map_err(|e| format!("创建工具目录失败: {e}"))?;
+    let name = archive.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if name.ends_with(".zip") {
+        let file = std::fs::File::open(archive).map_err(|e| format!("打开 zip 失败: {e}"))?;
+        let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("读取 zip 失败: {e}"))?;
+        for i in 0..zip.len() {
+            let mut entry = zip.by_index(i).map_err(|e| format!("读取 zip 条目失败: {e}"))?;
+            let Some(rel) = entry.enclosed_name() else {
+                continue;
+            };
+            let out = target.join(rel);
+            if entry.is_dir() {
+                std::fs::create_dir_all(&out).map_err(|e| format!("创建目录失败: {e}"))?;
+            } else {
+                if let Some(parent) = out.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
+                }
+                let mut f = std::fs::File::create(&out).map_err(|e| format!("写入文件失败: {e}"))?;
+                std::io::copy(&mut entry, &mut f).map_err(|e| format!("解压写入失败: {e}"))?;
+            }
+        }
+    } else if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
+        let file = std::fs::File::open(archive).map_err(|e| format!("打开 tar.gz 失败: {e}"))?;
+        let decoder = flate2::read::GzDecoder::new(file);
+        let mut tar = tar::Archive::new(decoder);
+        tar.unpack(target).map_err(|e| format!("解压 tar.gz 失败: {e}"))?;
+    } else {
+        return Err(format!("不支持的 esptool 归档格式: {name}"));
+    }
+    find_tool_binary(target).ok_or_else(|| "解压后找不到 esptool 可执行文件".to_string())
+}
+
+async fn ensure_official_esptool(st: &AppState) -> Result<Option<PathBuf>, String> {
+    if !BUILD_ESPTOOL_SUPPORTED || BUILD_ESPTOOL_PLATFORM_URL.is_empty() {
+        return Ok(None);
+    }
+    let _guard = st.tool_lock.lock().await;
+    let base = tool_base_dir();
+    let cache = base.join(format!("esptool-{}-{}", BUILD_ESPTOOL_VERSION, BUILD_ESPTOOL_ASSET));
+    if let Some(tool) = find_tool_binary(&cache) {
+        return Ok(Some(tool));
+    }
+    std::fs::create_dir_all(&cache).map_err(|e| format!("创建工具缓存失败: {e}"))?;
+    let archive = cache.join(if BUILD_ESPTOOL_ASSET.ends_with(".zip") { "esptool.zip" } else { "esptool.tar.gz" });
+    let bytes = reqwest::Client::new()
+        .get(BUILD_ESPTOOL_PLATFORM_URL)
+        .header(reqwest::header::USER_AGENT, "FluidCAN-Studio")
+        .timeout(Duration::from_secs(300))
+        .send()
+        .await
+        .map_err(|e| format!("下载官方 esptool 失败: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("下载官方 esptool HTTP 错误: {e}"))?
+        .bytes()
+        .await
+        .map_err(|e| format!("读取官方 esptool 失败: {e}"))?
+        .to_vec();
+    if !BUILD_ESPTOOL_SHA256.is_empty() {
+        let mut h = Sha256::new();
+        h.update(&bytes);
+        let actual = hex::encode(h.finalize());
+        if actual != BUILD_ESPTOOL_SHA256 {
+            return Err("官方 esptool 下载校验失败".to_string());
+        }
+    }
+    std::fs::write(&archive, &bytes).map_err(|e| format!("保存官方 esptool 失败: {e}"))?;
+    let target = cache.clone();
+    let tool = tokio::task::spawn_blocking(move || extract_esptool_archive(&archive, &target))
+        .await
+        .map_err(|e| format!("解压任务失败: {e}"))??;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = std::fs::metadata(&tool) {
+            let mut perms = meta.permissions();
+            perms.set_mode(0o755);
+            let _ = std::fs::set_permissions(&tool, perms);
+        }
+    }
+    Ok(Some(tool))
+}
+
 async fn flash_serial(
-    State(_st): State<Arc<AppState>>,
+    State(st): State<Arc<AppState>>,
     Json(req): Json<FlashReq>,
 ) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
     let firmware = if let Some(path) = req.firmware {
@@ -836,11 +972,21 @@ async fn flash_serial(
         p
     };
     let baud = req.baud.unwrap_or(460800);
-    let py = std::env::var("FLUIDCAN_PYTHON").unwrap_or_else(|_| "python".to_string());
-    let mut cmd = std::process::Command::new(py);
+    let official = ensure_official_esptool(&st).await;
+    let mut official_tool = None;
+    let mut cmd = match official {
+        Ok(Some(tool)) => {
+            official_tool = Some(tool.clone());
+            std::process::Command::new(tool)
+        }
+        Ok(None) | Err(_) => {
+            let py = std::env::var("FLUIDCAN_PYTHON").unwrap_or_else(|_| "python".to_string());
+            let mut c = std::process::Command::new(py);
+            c.arg("-m").arg("esptool");
+            c
+        }
+    };
     cmd.args([
-        "-m",
-        "esptool",
         "--chip",
         "esp32s3",
         "--port",
@@ -872,6 +1018,7 @@ async fn flash_serial(
         "stdout": stdout,
         "stderr": stderr,
         "firmware": firmware,
+        "official_esptool": official_tool.as_ref().map(|p| p.to_string_lossy().to_string()),
     })))
 }
 
@@ -995,6 +1142,7 @@ fn build_state(web_token: Option<String>) -> Arc<AppState> {
         serial: Arc::new(Mutex::new(SerialState::default())),
         serial_log: Arc::new(Mutex::new(Vec::new())),
         serial_exec_lock: Arc::new(tokio::sync::Mutex::new(())),
+        tool_lock: Arc::new(tokio::sync::Mutex::new(())),
         web_token,
     })
 }
@@ -1031,6 +1179,7 @@ fn build_router(state: Arc<AppState>) -> Router {
     let api = Router::new()
         .route("/health", get(health))
         .route("/toolchain", get(toolchain_info))
+        .route("/toolchain/install", post(install_toolchain))
         .route("/connect", post(connect))
         .route("/status", get(get_status))
         .route("/can", get(get_can))
