@@ -28,6 +28,10 @@ struct InstallerAssets;
 #[folder = "firmware/"]
 struct FirmwareAssets;
 
+#[derive(rust_embed::RustEmbed)]
+#[folder = "ui/"]
+struct UiAssets;
+
 const DEFAULT_DEVICE: &str = "";
 const DEFAULT_PORT: u16 = 8088;
 const RELEASE_NAME: &str = "fluidcan-pcb5";
@@ -40,6 +44,7 @@ struct AppState {
     base: Arc<tokio::sync::RwLock<String>>,
     serial: Arc<Mutex<SerialState>>,
     serial_log: Arc<Mutex<Vec<String>>>,
+    serial_exec_lock: Arc<tokio::sync::Mutex<()>>,
     web_token: Option<String>,
 }
 
@@ -283,6 +288,12 @@ async fn serial_open(
     Json(req): Json<SerialOpenReq>,
 ) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
     let baud = req.baud.unwrap_or(115200);
+    // Drop any previous port first so Windows does not keep the COM handle
+    // locked when the user re-opens the same port.
+    {
+        let mut s = st.serial.lock().unwrap();
+        s.port = None;
+    }
     let port = serialport::new(&req.port, baud)
         .timeout(Duration::from_millis(100))
         .open()
@@ -345,6 +356,52 @@ async fn serial_send(
         .unwrap()
         .push(format!("> {}", req.command.trim()));
     Ok(Json(json!({"ok": true, "sent": req.command})))
+}
+
+async fn serial_exec(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<SerialSendReq>,
+) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
+    let _guard = st.serial_exec_lock.lock().await;
+    let start = { st.serial_log.lock().unwrap().len() };
+    {
+        let mut s = st.serial.lock().unwrap();
+        let port = s.port.as_mut().ok_or_else(|| err("串口未打开"))?;
+        let line = format!("{}
+", req.command.trim());
+        port.write_all(line.as_bytes())
+            .map_err(|e| err(format!("串口写入失败: {e}")))?;
+        port.flush().ok();
+    }
+    st.serial_log
+        .lock()
+        .unwrap()
+        .push(format!("> {}", req.command.trim()));
+
+    let deadline = std::time::Instant::now() + Duration::from_millis(1600);
+    loop {
+        let lines = {
+            let log = st.serial_log.lock().unwrap();
+            log.iter().skip(start).cloned().collect::<Vec<_>>()
+        };
+        let mut text = Vec::new();
+        let mut done = false;
+        for line in &lines {
+            if let Some(rest) = line.strip_prefix("< ") {
+                text.push(rest.to_string());
+                if rest.trim() == "ok" || rest.contains("error:") || rest.starts_with("ALARM:") {
+                    done = true;
+                }
+            }
+        }
+        if done || std::time::Instant::now() >= deadline {
+            return Ok(Json(json!({
+                "text": text.join("\n"),
+                "ok": done,
+            })));
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
 }
 
 async fn serial_log(State(st): State<Arc<AppState>>) -> Json<Value> {
@@ -864,6 +921,22 @@ async fn index() -> Html<&'static str> {
     Html(include_str!("../ui/index.html"))
 }
 
+async fn ui_asset_named(path: String) -> Response {
+    let Some(asset) = UiAssets::get(&path) else {
+        return (StatusCode::NOT_FOUND, "ui asset not found").into_response();
+    };
+    let mime = mime_guess::from_path(&path).first_or_octet_stream();
+    ([(header::CONTENT_TYPE, mime.as_ref())], asset.data.into_owned()).into_response()
+}
+
+async fn ui_js(AxPath(path): AxPath<String>) -> Response {
+    ui_asset_named(format!("js/{path}")).await
+}
+
+async fn ui_css(AxPath(path): AxPath<String>) -> Response {
+    ui_asset_named(format!("css/{path}")).await
+}
+
 fn build_state(web_token: Option<String>) -> Arc<AppState> {
     Arc::new(AppState {
         client: reqwest::Client::builder()
@@ -875,6 +948,7 @@ fn build_state(web_token: Option<String>) -> Arc<AppState> {
         ))),
         serial: Arc::new(Mutex::new(SerialState::default())),
         serial_log: Arc::new(Mutex::new(Vec::new())),
+        serial_exec_lock: Arc::new(tokio::sync::Mutex::new(())),
         web_token,
     })
 }
@@ -918,6 +992,7 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/ports", get(list_ports))
         .route("/serial/open", post(serial_open))
         .route("/serial/send", post(serial_send))
+        .route("/serial/exec", post(serial_exec))
         .route("/serial/log", get(serial_log))
         .route("/firmware", get(firmware_info))
         .route("/install/ota", post(ota_update))
@@ -942,6 +1017,8 @@ fn build_router(state: Arc<AppState>) -> Router {
         .merge(installer_api)
         .route("/", get(index))
         .route("/index.html", get(index))
+        .route("/js/{*path}", get(ui_js))
+        .route("/css/{*path}", get(ui_css))
         .route(
             "/installer",
             get(|| async { installer_asset(AxPath("index.html".to_string())).await }),
