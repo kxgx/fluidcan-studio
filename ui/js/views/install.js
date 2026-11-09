@@ -10,7 +10,11 @@ const FOUR_MB = new Set([
 ]);
 
 function variant() {
-  return $("firmwareVariant")?.value || "default";
+  return $("firmwareVariant")?.value || "";
+}
+
+function hasVariant() {
+  return variant() !== "";
 }
 
 function isFourMb() {
@@ -30,12 +34,21 @@ export function updateVariantState() {
   const four = isFourMb();
   if (variantSelect) variantSelect.disabled = !releasesLoaded;
   if (releaseSelect) releaseSelect.disabled = !releasesLoaded;
-  if (button) button.disabled = !releasesLoaded || four;
+  if (button) button.disabled = !releasesLoaded || !hasVariant() || four;
   if (warn) {
-    warn.textContent = four
-      ? "当前选择为 4 MB 版本：没有 OTA 备用分区，不能网络 OTA，请使用串口烧录。"
-      : "当前选择为 8 MB 版本：支持网络 OTA。";
-    warn.className = four ? "sub badtxt" : "sub muted";
+    if (!releasesLoaded) {
+      warn.textContent = "请先获取版本列表，再选择固件分类。";
+      warn.className = "sub";
+    } else if (!hasVariant()) {
+      warn.textContent = "请选择固件分类后再进行 OTA。";
+      warn.className = "sub warntxt";
+    } else if (four) {
+      warn.textContent = "当前选择为 4 MB 版本：没有 OTA 备用分区，不能网络 OTA，请使用串口烧录。";
+      warn.className = "sub badtxt";
+    } else {
+      warn.textContent = "当前选择为 8 MB 版本：支持网络 OTA。";
+      warn.className = "sub";
+    }
   }
 }
 
@@ -82,6 +95,7 @@ export async function refreshRemote() {
 
 export async function remoteOta() {
   if (!releasesLoaded) throw new Error("先获取版本列表");
+  if (!hasVariant()) throw new Error("先选择固件分类");
   if (isFourMb()) throw new Error("4 MB 版本不能网络 OTA，请使用串口烧录");
   const tag = $("remoteRelease").value;
   if (!tag) throw new Error("先获取并选择版本");

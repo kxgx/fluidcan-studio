@@ -98,8 +98,9 @@
         <button class="primary" onclick="refreshRemote()">获取版本列表</button>
         <select id="remoteRelease" style="min-width:320px" disabled><option value="">先获取版本</option></select>
         <select id="firmwareVariant" style="min-width:330px" disabled>
+          <option value="">请选择固件分类</option>
           <optgroup label="4 MB Flash（不能网络 OTA）">
-            <option value="nopsram-oled-usb-4mb" selected>nopsram-oled-usb-4mb · 本机 N4 无 PSRAM OLED USB</option>
+            <option value="nopsram-oled-usb-4mb">nopsram-oled-usb-4mb · 本机 N4 无 PSRAM OLED USB</option>
             <option value="quad-oled-usb-4mb">quad-oled-usb-4mb · 4 MB Quad PSRAM OLED USB</option>
             <option value="octal-oled-usb-4mb">octal-oled-usb-4mb · 4 MB Octal PSRAM OLED USB</option>
           </optgroup>
@@ -116,7 +117,7 @@
         <button class="primary" id="remoteOtaBtn" onclick="remoteOta()" disabled>OTA 到当前设备</button>
         <span id="remoteMsg" class="pill">--</span>
       </div>
-      <div id="variantWarn" class="sub">当前选择为 4 MB 版本：没有 OTA 备用分区，请使用串口烧录。</div>
+      <div id="variantWarn" class="sub">请选择固件分类。</div>
       <pre id="remoteOut">--</pre>
     </div>
     <div class="split">
