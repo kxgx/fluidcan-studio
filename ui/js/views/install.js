@@ -135,8 +135,11 @@ export async function loadToolchain() {
   const rows = [
     ["官方 esptool", j.esptool || "--"],
     ["官方 ESP-IDF", j.esp_idf || "--"],
+    ["目标平台", j.platform || "--"],
+    ["官方 esptool 包", j.esptool_asset || "当前平台无官方独立包"],
     ["esptool 版本", (j.esptool_versions || []).join(", ") || "--"],
     ["ESP-IDF 版本", (j.esp_idf_versions || []).join(", ") || "--"],
+    ["独立烧录工具", j.esptool_supported ? "可用" : "不支持（Android 等移动端）"],
     ["来源", j.source || "--"],
   ];
   box.innerHTML = rows

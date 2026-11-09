@@ -161,7 +161,10 @@ async fn toolchain_info() -> Json<Value> {
     Json(json!({
         "esptool": BUILD_ESPTOOL_VERSION,
         "esp_idf": BUILD_ESP_IDF_VERSION,
-        "esptool_windows_url": BUILD_ESPTOOL_WINDOWS_URL,
+        "platform": BUILD_ESPTOOL_PLATFORM,
+        "esptool_asset": BUILD_ESPTOOL_ASSET,
+        "esptool_platform_url": BUILD_ESPTOOL_PLATFORM_URL,
+        "esptool_supported": BUILD_ESPTOOL_SUPPORTED,
         "esptool_versions": BUILD_ESPTOOL_VERSIONS,
         "esp_idf_versions": BUILD_ESP_IDF_VERSIONS,
         "source": "official Espressif release metadata (build time)",
