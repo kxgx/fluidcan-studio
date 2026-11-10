@@ -40,7 +40,7 @@
       <div class="card"><h3>驱动在线</h3><div id="drvBox" class="kvbox"><span>未读取</span></div></div>
     </div>
     <h2>PD42S1 驱动</h2>
-    <div class="card"><table><thead><tr><th>地址</th><th>固件</th><th>位置</th><th>误差</th><th>速度</th><th>运行</th><th>堵转</th><th>使能</th><th>到位</th></tr></thead><tbody id="driverTable"><tr><td colspan="9" class="muted">点击“刷新”读取</td></tr></tbody></table></div>
+    <div class="card"><table><thead><tr><th>地址</th><th>轴</th><th>固件</th><th>位置</th><th>误差</th><th>速度</th><th>运行</th><th>堵转</th><th>使能</th><th>到位</th></tr></thead><tbody id="driverTable"><tr><td colspan="10" class="muted">点击“刷新”读取</td></tr></tbody></table></div>
     <div class="row"><button class="primary" onclick="refreshAll()">刷新</button><button onclick="refreshCan()">刷新 CAN</button><span id="lastUpdate" class="pill">--</span></div>
   </section>
 
@@ -56,6 +56,12 @@
       <button class="warn" onclick="canCmd('$CANReset')">复位驱动</button>
       <button onclick="canCmd('$CANLog')">切换 CAN 日志</button>
     </div>
+    <div class="card">
+      <h3>双 Y / CAN 配置</h3>
+      <div class="sub">从 config.yaml 读取 Y0/Y1 地址、方向、block target、sync_group 和异常字段；只读，不改配置。</div>
+      <div class="row"><button class="primary" onclick="loadCanConfig()">读取双 Y 配置</button><button onclick="openConfigEditor()">打开配置页</button><span id="dualYMsg" class="pill">--</span></div>
+      <div id="dualYBox" class="kvbox"><span>点击“读取双 Y 配置”</span></div>
+    </div>
     <div class="split">
       <pre id="canOut">--</pre>
       <div class="card"><h3>快捷命令</h3><div class="row"><button onclick="canCmd('$CANSweep')">CANSweep</button><button onclick="canCmd('$CANEchoOn')">EchoOn</button><button onclick="canCmd('$CANStop')">Stop</button><button onclick="canCmd('$CANClear')">Clear</button></div><div class="sub">CAN 日志默认关闭，测试时用 $CANLog 打开，结束后再关闭。</div></div>
@@ -65,6 +71,22 @@
   <section id="view-control" class="view">
     <h1>运动控制</h1><div class="sub">点动、回零、解锁；状态异常时先解锁</div>
     <div class="card">
+      <div class="row">
+        <label>坐标清零</label>
+        <button onclick="zeroAxis('X')">X 清零</button>
+        <button onclick="zeroAxis('Y')">Y 清零</button>
+        <button onclick="zeroAxis('Z')">Z 清零</button>
+        <button class="warn" onclick="zeroAll()">全部清零</button>
+        <span class="sub" style="margin:0">G10 L20 P1，工作坐标，不移动电机</span>
+      </div>
+      <div class="row">
+        <label>驱动零位</label>
+        <button class="warn" onclick="zeroDriverAxis('X')">X 驱动零位</button>
+        <button class="warn" onclick="zeroDriverAxis('Y')">Y 驱动零位</button>
+        <button class="warn" onclick="zeroDriverAxis('Z')">Z 驱动零位</button>
+        <button class="warn" onclick="zeroDriverAll()">全部驱动零位</button>
+        <span class="sub" style="margin:0">$CANZero 清驱动器编码器，再加 G10 坐标零；Y 清地址2/3</span>
+      </div>
       <div class="row">
         <label>轴</label><select id="jogAxis"><option>X</option><option>Y</option><option>Z</option></select>
         <label>距离 mm</label><input id="jogDist" value="1" style="width:90px">

@@ -1,6 +1,6 @@
 [package]
 name = "fluidcan-studio"
-version = "0.2.3"
+version = "0.2.6"
 edition = "2021"
 description = "FluidNC CAN motor control / debug / installer studio"
 

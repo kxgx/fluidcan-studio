@@ -20,13 +20,13 @@ function renderDrivers(can) {
   if (!table) return;
   const rows = driverRows(can);
   if (!rows.length) {
-    table.innerHTML = '<tr><td colspan="9" class="muted">未读到驱动器，检查 CAN 日志/总线</td></tr>';
+    table.innerHTML = '<tr><td colspan="10" class="muted">未读到驱动器，检查 CAN 日志/总线</td></tr>';
     return;
   }
   table.innerHTML = rows
     .map(
       (d) => `<tr>
-        <td class="mono">${esc(d.addr)}</td><td>${esc(d.fw || "--")}</td>
+        <td class="mono">${esc(d.addr)}</td><td>${esc(d.role || "--")}</td><td>${esc(d.fw || "--")}</td>
         <td class="mono">${esc(d.pos || "--")}</td><td class="mono">${esc(d.err || "--")}</td>
         <td class="mono">${esc(d.speed || "--")}</td><td>${esc(d.status || "--")}</td>
         <td class="${d.stall === "yes" ? "badtxt" : "oktxt"}">${esc(d.stall || "--")}</td>

@@ -2,9 +2,10 @@ import * as transport from "./core/transport.js";
 import { patch, state } from "./core/store.js";
 import { refreshOverview } from "./views/overview.js";
 import { refreshCanView, runCanCommand } from "./views/can.js";
-import { clearLog, jog, log, sendCommand, sendConsole, sendQuick } from "./views/control.js";
+import { clearLog, jog, log, sendCommand, sendConsole, sendQuick, zeroAll, zeroAxis, zeroDriverAll, zeroDriverAxis } from "./views/control.js";
 import { loadConfig, saveConfig } from "./views/config.js";
 import * as install from "./views/install.js";
+import { loadCanConfig, openConfigEditor } from "./views/dual-y.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -194,11 +195,17 @@ Object.assign(window, {
   canCmd,
   sendCmd,
   jog,
+  zeroAxis,
+  zeroAll,
+  zeroDriverAxis,
+  zeroDriverAll,
   sendQuick,
   sendConsole,
   clearLog,
   loadConfig: () => run("config", loadConfig),
   saveConfig: () => run("config", saveConfig),
+  loadCanConfig: () => run("can", loadCanConfig),
+  openConfigEditor,
   refreshRemote: () => run("install", install.refreshRemote),
   remoteOta: () => run("install", install.remoteOta),
   otaUpload: () => run("install", install.otaUpload),

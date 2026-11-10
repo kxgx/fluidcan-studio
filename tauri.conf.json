@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "FluidCAN Studio",
-  "version": "0.2.3",
+  "version": "0.2.6",
   "identifier": "com.fluidcan.studio",
   "build": {
     "frontendDist": "ui"

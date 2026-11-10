@@ -6,16 +6,17 @@ Rust + Tauri 的 FluidNC CAN 调试、控制、配置与固件安装工具，面
 
 ![桌面 GUI](docs/gui.png)
 
-当前发布版本：`studio-v0.2.2`
+当前版本：`studio-v0.2.6`
 
 ## 功能
 
 - **自动扫描设备**：启动后按本机 /24 局域网探测 `$I`，识别 FluidNC 并自动填入地址、自动连接
 - 手动输入控制器地址
 - 总览：固件版本、状态、MPos、CAN 总线错误计数、驱动在线/使能数量
-- PD42S1 驱动表：地址、固件、位置、误差、速度、运行状态、堵转、使能、到位
+- PD42S1 驱动表：地址、轴身份（X/Y0/Y1/Z）、固件、位置、误差、速度、运行状态、堵转、使能、到位
 - CAN：`$CANStatus`、`$CANFaults`、`$CANPos`、`$CANDriverInfo`、`$CANScan`、`$CANAutoConfig`、`$CANReset`、`$CANLog`
-- 运动控制：X/Y/Z 点动、回零、解锁、使能/失能、任意命令
+- 双 Y 配置面板：只读解析 config.yaml，显示 Y0/Y1 地址、counts_per_step、方向、block target、sync_group、力矩/PID，并警告自动分组字段和地址/方向不一致
+- 运动控制：X/Y/Z 点动、回零、解锁、使能/失能、X/Y/Z 单独工作坐标清零（G10 L20 P1）和驱动零位（$CANZero，清 PD42S1 编码器后自动坐标零）、任意命令
 - 配置：读取/编辑/上传 `config.yaml`，上传前 YAML 语法检查
 - 远程仓库 OTA：从 GitHub Releases 读取 `can-vX.Y.Z`，下载 `firmware.bin` OTA；GitHub API 限流时回退 `releases.atom`
 - 网络 OTA：本地 `.bin` 上传到设备 `/updatefw`

@@ -23,6 +23,12 @@ export function stateParts(value) {
   };
 }
 
+const AXIS_ROLES = { 1: "X", 2: "Y0", 3: "Y1", 4: "Z" };
+
+function roleFor(address) {
+  return AXIS_ROLES[Number(address)] || "";
+}
+
 export function driverRows(can) {
   const pos = asText(can && can.positions);
   const faults = asText(can && can.faults);
@@ -35,6 +41,7 @@ export function driverRows(can) {
     if (m) {
       rows.set(m[1], {
         addr: m[1],
+        role: roleFor(m[1]),
         pos: m[2],
         err: m[3],
         speed: m[4],
@@ -48,7 +55,7 @@ export function driverRows(can) {
       /address\s+(\d+):.*fw V([\d.]+).*status=(\w+).*stall=(\w+).*enabled=(\w+).*in-position=(\w+)/,
     );
     if (m) {
-      const row = rows.get(m[1]) || { addr: m[1] };
+      const row = rows.get(m[1]) || { addr: m[1], role: roleFor(m[1]) };
       Object.assign(row, {
         fw: m[2],
         status: m[3],
