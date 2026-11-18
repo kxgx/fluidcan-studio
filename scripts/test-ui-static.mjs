@@ -40,4 +40,47 @@ assert.ok(html.includes("X 驱动零位") && html.includes("Y 驱动零位") && 
 assert.ok(view.includes("parseCanConfig"), "view must use the pure parser");
 assert.ok(view.includes("isSerial"), "serial fallback missing");
 
+// ---- Connect / scan / serial flows must stay independent -------------------
+for (const id of ["connectBtn", "scanBtn", "openSerialBtn", "deviceUrl", "scanResults", "scanMsg", "connPill"]) {
+  assert.ok(ids.includes(id), `missing id ${id}`);
+}
+
+function functionBody(source, name) {
+  const start = source.indexOf(`function ${name}(`);
+  assert.ok(start >= 0, `missing function ${name}`);
+  const open = source.indexOf("{", start);
+  assert.ok(open >= 0, `missing body ${name}`);
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === "{") depth += 1;
+    else if (source[i] === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(open, i + 1);
+    }
+  }
+  assert.fail(`unterminated function ${name}`);
+}
+
+const connectBody = functionBody(app, "connectDevice");
+const scanBody = functionBody(app, "scanDevices");
+const serialBody = functionBody(app, "openSerial");
+const bootBody = functionBody(app, "boot");
+
+// 连接按钮：只连接输入框/扫描结果中的地址，地址为空时提示，绝不回退成扫描。
+assert.ok(!connectBody.includes("scanDevices"), "connectDevice must not trigger a scan");
+assert.ok(connectBody.includes("resolveConnectTarget"), "connectDevice must resolve the typed/scan address");
+assert.ok(connectBody.includes("transport.connectHttp"), "connectDevice must use the HTTP connect call");
+// 扫描按钮：只发现设备，绝不自动连接。
+assert.ok(!scanBody.includes("connectDevice") && !scanBody.includes("connectHttp"), "scanDevices must not connect");
+assert.ok(scanBody.includes("transport.scan"), "scanDevices must use the scan call");
+assert.ok(scanBody.includes("scannedAddress"), "scanDevices must prefill a single scanned address");
+// 串口按钮：独立链路，不触发扫描或 WiFi 连接。
+assert.ok(!serialBody.includes("scanDevices") && !serialBody.includes("connectHttp"), "openSerial must not scan or HTTP-connect");
+assert.ok(serialBody.includes("transport.openSerial"), "openSerial must use the serial open call");
+// 启动时最多自动扫描一次，不得自动连接。
+assert.ok(bootBody.includes("setTimeout(scanDevices"), "startup should auto-scan once");
+assert.ok(!bootBody.includes("connectDevice("), "startup must not auto-connect");
+assert.ok(app.includes('"scanResults")?.addEventListener'), "scan result picker change handler missing");
+assert.ok(app.includes("本次扫描结束"), "scan button must guard re-entrant scans");
+
 console.log("static UI tests: PASS");

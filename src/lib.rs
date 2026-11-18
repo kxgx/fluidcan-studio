@@ -198,14 +198,36 @@ async fn health(State(st): State<Arc<AppState>>) -> Json<Value> {
 }
 
 async fn connect(State(st): State<Arc<AppState>>, Json(req): Json<ConnectReq>) -> Json<Value> {
-    let base = normalize_base(req.url.as_deref().unwrap_or(DEFAULT_DEVICE));
-    *st.base.write().await = base.clone();
-    let probe = device_command(&st.client, &base, "$I").await;
-    Json(json!({
-        "base": base,
-        "connected": probe.is_ok(),
-        "probe": probe.unwrap_or_else(|e| e),
-    }))
+    let requested = normalize_base(req.url.as_deref().unwrap_or(DEFAULT_DEVICE));
+    let previous = current_base(&st).await;
+    if requested.is_empty() {
+        return Json(json!({
+            "base": previous,
+            "requested": requested,
+            "connected": false,
+            "error": "设备地址为空",
+        }));
+    }
+    let probe = device_command(&st.client, &requested, "$I").await;
+    match probe {
+        Ok(text) => {
+            *st.base.write().await = requested.clone();
+            Json(json!({
+                "base": requested,
+                "requested": requested,
+                "connected": true,
+                "probe": text,
+            }))
+        }
+        // A failed connect must not repoint the active device: keep using the
+        // previously working base so the scan/connect flows stay recoverable.
+        Err(e) => Json(json!({
+            "base": previous,
+            "requested": requested,
+            "connected": false,
+            "probe": e,
+        })),
+    }
 }
 
 async fn get_status(State(st): State<Arc<AppState>>) -> Response {

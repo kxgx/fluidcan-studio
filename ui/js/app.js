@@ -6,8 +6,16 @@ import { clearLog, jog, log, sendCommand, sendConsole, sendQuick, zeroAll, zeroA
 import { loadConfig, saveConfig } from "./views/config.js";
 import * as install from "./views/install.js";
 import { loadCanConfig, openConfigEditor } from "./views/dual-y.js";
+import { resolveConnectTarget, scanMessage, scannedAddress } from "./core/session.js";
 
 const $ = (id) => document.getElementById(id);
+
+// The top bar has three independent flows and they must never trigger each
+// other: connect reaches a typed/picked address, scan only discovers devices,
+// and the serial port is its own link.
+let scanBusy = false;
+let connectBusy = false;
+let serialBusy = false;
 
 function setConn(ok, text) {
   const pill = $("connPill");
@@ -17,6 +25,20 @@ function setConn(ok, text) {
   patch({ connected: ok });
 }
 
+function setBusyButton(id, busy, idleText, busyText) {
+  const button = $(id);
+  if (!button) return;
+  button.disabled = busy;
+  button.textContent = busy ? busyText : idleText;
+}
+
+function setScanPill(text, kind = "") {
+  const msg = $("scanMsg");
+  if (!msg) return;
+  msg.textContent = text;
+  msg.className = "pill" + (kind ? " " + kind : "");
+}
+
 function showView(name) {
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
@@ -24,44 +46,96 @@ function showView(name) {
   if (view) view.classList.add("active");
 }
 
+// Discovery flow: only fills the scan picker (and the address input when
+// exactly one device is found).  It never connects to anything.
 async function scanDevices() {
   const select = $("scanResults");
-  const msg = $("scanMsg");
-  if (!select || !msg) return;
-  msg.textContent = "扫描中...";
+  if (!select) return;
+  if (scanBusy) {
+    log("扫描已在进行中，请等待本次扫描结束", "err");
+    return;
+  }
+  scanBusy = true;
+  setBusyButton("scanBtn", true, "扫描设备", "扫描中...");
+  select.disabled = true;
+  setScanPill("扫描中...", "warn2");
   select.innerHTML = "<option>扫描中...</option>";
   try {
     const j = await transport.scan();
     const devices = j.devices || [];
-    select.innerHTML = devices.length
-      ? devices
+    const picker = devices.length
+      ? (devices.length > 1 ? '<option value="">扫描结果（选择设备）</option>' : "") +
+        devices
           .map((d) => `<option value="${esc(d.url)}">${esc(d.version || "FluidNC")} · ${esc(d.ip)}</option>`)
           .join("")
       : '<option value="">未发现设备</option>';
-    msg.textContent = devices.length ? `发现 ${devices.length} 台` : "未发现";
-    log(`扫描 ${j.subnet || ""}: ${devices.length} 台`, devices.length ? "ok" : "err");
+    select.innerHTML = picker;
+    const input = $("deviceUrl");
+    const single = scannedAddress(devices);
+    const filled = single && input && !input.value.trim() ? single : "";
+    if (filled && input) input.value = filled;
+    setScanPill(scanMessage(devices), devices.length ? "ok" : "bad");
+    const subnets = (j.subnets || []).join(", ");
+    log(`扫描 ${subnets}: ${devices.length} 台`, devices.length ? "ok" : "err");
+    if (filled) log(`扫描结果已填入地址 ${filled}；点击“连接”连接该设备`, "ok");
+    else if (single) log(`扫描到 1 台设备 ${single}；输入框已有地址，未覆盖（可清空后重扫或在“扫描结果”中选择）`, "ok");
+    else if (devices.length > 1) log("扫描到多台设备：在“扫描结果”中选择一台，再点击“连接”", "ok");
   } catch (e) {
     select.innerHTML = '<option value="">扫描失败</option>';
-    msg.textContent = "扫描失败";
+    setScanPill("扫描失败", "bad");
     log(String(e), "err");
+  } finally {
+    scanBusy = false;
+    select.disabled = false;
+    setBusyButton("scanBtn", false, "扫描设备", "扫描中...");
   }
 }
 
+// Connect flow: uses the typed address first, then the scan picker selection.
+// With neither it explains what to do and returns; it never falls back to a
+// scan, so the two buttons stay independent.
 async function connectDevice() {
-  const url = $("deviceUrl").value.trim();
-  if (!url) {
-    await scanDevices();
+  if (connectBusy) {
+    log("连接正在处理中，请等待本次连接结束", "err");
     return;
   }
+  const target = resolveConnectTarget($("deviceUrl")?.value, $("scanResults")?.value);
+  if (!target) {
+    setConn(false, "未选择设备");
+    log("连接：请先输入设备地址，或在“扫描结果”中选择一台设备；扫描请用“扫描设备”按钮", "err");
+    return;
+  }
+  connectBusy = true;
+  setBusyButton("connectBtn", true, "连接", "连接中...");
+  const pill = $("connPill");
+  if (pill) {
+    pill.textContent = "连接中...";
+    pill.className = "pill warn2";
+  }
   try {
-    log("连接 " + url);
-    const j = await transport.connectHttp(url);
-    setConn(j.connected, j.connected ? "已连接 " + j.base : "连接失败");
-    log(JSON.stringify(j), j.connected ? "ok" : "err");
-    if (j.connected) await refreshOverview();
+    log("连接 " + target.url + (target.source === "scan" ? "（来自扫描结果）" : ""));
+    const j = await transport.connectHttp(target.url);
+    if (!j.connected) {
+      const reason = j.probe || j.error || "设备无响应";
+      setConn(false, "连接失败");
+      log(`连接失败 ${j.requested || target.url}: ${reason}`, "err");
+      return;
+    }
+    const base = j.base || target.url;
+    if ($("deviceUrl")) $("deviceUrl").value = base;
+    setConn(true, "已连接 " + base);
+    log(`已连接 ${base}`, "ok");
+    try {
+      await refreshOverview();
+    } catch (e) {
+      log("已连接，但读取状态失败: " + e, "err");
+    }
   } catch (e) {
     setConn(false, "连接失败");
     log(String(e), "err");
+  } finally {
+    connectBusy = false;
+    setBusyButton("connectBtn", false, "连接", "连接中...");
   }
 }
 
@@ -86,20 +160,36 @@ async function refreshPorts() {
   }
 }
 
+// Serial flow: its own link.  It must not scan or connect over HTTP, and a
+// failed open must not touch the WiFi connection state.
 async function openSerial() {
-  const port = $("serialPorts").value;
-  if (!port) {
-    log("先选择串口", "err");
+  if (serialBusy) {
+    log("串口正在打开中，请等待", "err");
     return;
   }
+  const port = $("serialPorts").value;
+  if (!port) {
+    log("打开串口：请先选择串口（串口是独立于“连接/扫描”的链路）", "err");
+    return;
+  }
+  serialBusy = true;
+  setBusyButton("openSerialBtn", true, "打开串口", "打开中...");
   try {
     const j = await transport.openSerial(port);
     setConn(true, "串口 " + port);
-    log("串口已打开 " + JSON.stringify(j), "ok");
+    log("串口已打开 " + JSON.stringify(j) + "（串口链路）", "ok");
     startSerialPoll();
-    await refreshOverview();
+    try {
+      await refreshOverview();
+    } catch (e) {
+      log("串口已打开，但读取状态失败: " + e, "err");
+    }
   } catch (e) {
+    setConn(false, "串口打开失败");
     log(String(e), "err");
+  } finally {
+    serialBusy = false;
+    setBusyButton("openSerialBtn", false, "打开串口", "打开中...");
   }
 }
 
@@ -174,11 +264,19 @@ async function boot() {
     $("clock").textContent = new Date().toLocaleString();
   }, 1000);
   setConn(false, "未连接");
-  log("FluidCAN Studio 已启动：自动扫描设备和串口，连接/打开串口由用户手动操作。");
+  log("FluidCAN Studio 已启动：“扫描设备”只发现设备，“连接”用地址输入框/扫描结果建立 WiFi 连接，串口是独立链路；启动只自动扫描一次，不自动连接。");
   setTimeout(scanDevices, 600);
   refreshPorts();
   $("serialPorts")?.addEventListener("change", () => {
     if ($("serialPorts").value) $("flashPort").value = $("serialPorts").value;
+  });
+  // Picking a discovered device only fills the address input; the user still
+  // clicks "连接", so scanning never connects on its own.
+  $("scanResults")?.addEventListener("change", () => {
+    const url = $("scanResults").value;
+    if (!url) return;
+    $("deviceUrl").value = url;
+    log(`已选择扫描结果 ${url}；点击“连接”连接该设备`, "ok");
   });
 }
 

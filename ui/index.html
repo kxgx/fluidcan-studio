@@ -9,14 +9,17 @@
 <body>
 <header>
   <div class="brand">Fluid<b>CAN</b> Studio</div>
-  <input id="deviceUrl" placeholder="扫描或输入设备地址" style="width:230px" title="FluidNC 地址">
-  <button class="primary" onclick="connectDevice()">连接</button>
-  <button onclick="scanDevices()">扫描设备</button>
-  <select id="scanResults" style="width:260px"><option value="">扫描结果</option></select>
+  <span class="tag" style="margin-left:0">WiFi</span>
+  <input id="deviceUrl" placeholder="扫描结果或输入设备地址" style="width:230px" title="FluidNC 设备地址：手动输入，或从扫描结果中选择">
+  <button class="primary" id="connectBtn" onclick="connectDevice()" title="连接输入框或扫描结果中的设备地址；不会自动扫描">连接</button>
+  <span class="tag" style="margin-left:16px">扫描</span>
+  <button id="scanBtn" onclick="scanDevices()" title="只扫描局域网中的 FluidNC 设备，不自动连接">扫描设备</button>
+  <select id="scanResults" style="width:260px" title="扫描结果：选中后填入设备地址，再点“连接”"><option value="">扫描结果</option></select>
   <span id="scanMsg" class="pill">未扫描</span>
-  <select id="serialPorts" style="width:150px"><option value="">串口...</option></select>
+  <span class="tag" style="margin-left:16px">串口</span>
+  <select id="serialPorts" style="width:150px" title="串口链路与 WiFi 连接相互独立"><option value="">串口...</option></select>
   <button onclick="refreshPorts()">刷新</button>
-  <button onclick="openSerial()">打开串口</button>
+  <button id="openSerialBtn" onclick="openSerial()" title="打开串口链路（独立于 WiFi 连接）">打开串口</button>
   <span id="connPill" class="pill">未连接</span>
   <span class="grow"></span>
   <span id="clock" class="pill"></span>
