@@ -1,16 +1,12 @@
 // Pure helpers for reading the CAN motor section of FluidNC config.yaml.
 // Kept dependency-free so they can be exercised from Node.
+//
+// The firmware is protocol-neutral: can.driver selects the bus protocol and
+// each motor carries a protocol-specific block (pd42s1 / zdt / canopen).
+// This parser keeps the common fields normalized and preserves the
+// protocol-specific fields the UI needs to display.
 
-export const AXIS_ROLES = Object.freeze({
-  1: "X",
-  2: "Y0",
-  3: "Y1",
-  4: "Z",
-});
-
-export function driverRole(address) {
-  return AXIS_ROLES[Number(address)] || "";
-}
+import { motorDriverEntry, normalizeProtocol, protocolLabel } from "./drivers.js";
 
 function scalar(value) {
   const text = value.trim();
@@ -50,83 +46,178 @@ export function parseConfigMap(yaml) {
   return root;
 }
 
-function motorSummary(motor, fallbackAddress) {
-  if (!motor || typeof motor !== "object") {
+function numberOrNull(value) {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function motorSummary(motor, fallbackAddress = null) {
+  const entry = motor && typeof motor === "object" ? motorDriverEntry(motor) : null;
+  if (!entry) {
     return {
+      present: Boolean(motor && typeof motor === "object"),
+      protocol: "",
+      protocolLabel: "",
       address: fallbackAddress,
       counts: null,
+      counts_per_step: null,
+      counts_per_rev: null,
       invert: null,
       block: null,
       sync: null,
       torque: null,
       pid: null,
+      firmware: null,
+      checksum: null,
+      node_id: null,
+      speed_rpm: null,
+      accel: null,
+      update_ms: null,
     };
   }
-  const pd = motor.pd42s1 && typeof motor.pd42s1 === "object" ? motor.pd42s1 : {};
+  const p = entry.config || {};
   return {
-    address: pd.address ?? fallbackAddress,
-    counts: pd.counts_per_step ?? null,
-    invert: pd.invert_direction ?? null,
-    block: pd.block_targets ?? null,
-    sync: pd.sync_group ?? 0,
-    torque: pd.max_torque_ma ?? null,
+    present: true,
+    protocol: entry.protocol,
+    protocolLabel: protocolLabel(entry.protocol),
+    address: p.address ?? fallbackAddress,
+    counts: p.counts_per_step ?? null,
+    counts_per_step: p.counts_per_step ?? null,
+    counts_per_rev: p.counts_per_rev ?? null,
+    invert: p.invert_direction ?? null,
+    block: p.block_targets ?? null,
+    sync: p.sync_group ?? null,
+    torque: p.max_torque_ma ?? null,
     pid:
-      pd.position_pid_p == null && pd.position_pid_i == null && pd.position_pid_d == null
+      p.position_pid_p == null && p.position_pid_i == null && p.position_pid_d == null
         ? null
-        : [pd.position_pid_p, pd.position_pid_i, pd.position_pid_d],
+        : [p.position_pid_p, p.position_pid_i, p.position_pid_d],
+    firmware: p.firmware ?? null,
+    checksum: p.checksum ?? null,
+    node_id: p.node_id ?? null,
+    speed_rpm: p.speed_rpm ?? null,
+    accel: p.accel ?? null,
+    update_ms: p.update_ms ?? null,
   };
 }
 
+function axisMotors(axisNode) {
+  if (!axisNode || typeof axisNode !== "object") return [];
+  const motors = [];
+  for (let index = 0; index < 16; index += 1) {
+    const motor = axisNode[`motor${index}`];
+    if (!motor || typeof motor !== "object") continue;
+    const entry = motorDriverEntry(motor);
+    if (!entry) continue;
+    motors.push({ index, motor: motorSummary(motor) });
+  }
+  return motors;
+}
+
 /**
- * Extract the dual-Y/CAN settings that matter to this machine and flag
- * configurations that the current single-axis-per-motor firmware should not
- * silently accept.
+ * Extract the generic CAN settings and per-axis motor details from config.yaml.
+ * Returns:
+ *   can:    { driver, driverLabel, baud, tx, rx }
+ *   axes:   [{ name, steps, motors: [{ role, ...summary }] }]
+ *   drivers:flat list (same shape as parseDriverLayout)
+ *   warnings
+ * plus x/y/z convenience objects for older views.
  */
 export function parseCanConfig(yaml) {
   const doc = parseConfigMap(yaml);
-  const axes = doc.axes && typeof doc.axes === "object" ? doc.axes : {};
-  const x = axes.x && typeof axes.x === "object" ? axes.x : {};
-  const y = axes.y && typeof axes.y === "object" ? axes.y : {};
-  const z = axes.z && typeof axes.z === "object" ? axes.z : {};
-  const can = doc.can && typeof doc.can === "object" ? doc.can : {};
-
-  const y0 = motorSummary(y.motor0, 2);
-  const y1 = motorSummary(y.motor1, 3);
+  const axesNode = doc.axes && typeof doc.axes === "object" ? doc.axes : {};
+  const canNode = doc.can && typeof doc.can === "object" ? doc.can : {};
+  const canDriver = normalizeProtocol(canNode.driver);
+  const axes = [];
+  const drivers = [];
+  const protocols = [];
+  const addressOwners = new Map();
   const warnings = [];
 
-  if (!y.motor1) warnings.push("Y motor1 不存在：当前没有独立 Y1 控制配置");
-  if (Number(y0.address) !== 2) warnings.push(`Y0 地址是 ${y0.address ?? "未设置"}，预期 2`);
-  if (y.motor1 && Number(y1.address) !== 3) warnings.push(`Y1 地址是 ${y1.address ?? "未设置"}，预期 3`);
-  if (y0.invert != null && y1.invert != null && y0.invert !== y1.invert) {
-    warnings.push("Y0/Y1 invert_direction 不一致");
+  for (const [axisKey, axisNode] of Object.entries(axesNode)) {
+    if (!axisNode || typeof axisNode !== "object") continue;
+    const name = String(axisKey).trim().toUpperCase();
+    if (!name) continue;
+    const motors = axisMotors(axisNode);
+    if (!motors.length) continue;
+    axes.push({
+      name,
+      steps: axisNode.steps_per_mm ?? null,
+      motors: motors.map((entry, index) => ({
+        role: motors.length > 1 ? `${name}${index}` : name,
+        ...entry.motor,
+      })),
+    });
+    motors.forEach((entry, index) => {
+      const summary = entry.motor;
+      const role = motors.length > 1 ? `${name}${index}` : name;
+      if (!protocols.includes(summary.protocol)) protocols.push(summary.protocol);
+      drivers.push({ axis: name, role, ...summary });
+      if (summary.address != null) {
+        if (addressOwners.has(summary.address)) {
+          warnings.push(`地址 ${summary.address} 被 ${addressOwners.get(summary.address)} 和 ${role} 重复使用`);
+        } else {
+          addressOwners.set(summary.address, role);
+        }
+      }
+    });
+    const configured = motors.map((entry) => entry.motor);
+    const inverts = configured.map((m) => m.invert).filter((v) => v != null);
+    if (inverts.length > 1 && new Set(inverts).size > 1) {
+      warnings.push(`${name} 轴多个电机的 invert_direction 不一致`);
+    }
+    const syncs = configured.map((m) => m.sync).filter((v) => v != null);
+    if (syncs.length > 1 && new Set(syncs).size > 1) {
+      warnings.push(`${name} 轴多个电机的 sync_group 不一致`);
+    }
   }
-  if (can.group_member_address || can.group_member_group) {
+
+  if (protocols.length > 1) {
+    warnings.push(
+      `配置了多种 CAN 协议（${protocols.map(protocolLabel).join(" / ")}），固件 can.driver 只能选择一种；混合总线不会同时工作`,
+    );
+  }
+  if (canDriver && protocols.length === 1 && protocols[0] !== canDriver) {
+    warnings.push(`can.driver=${protocolLabel(canDriver)} 与电机配置协议 ${protocolLabel(protocols[0])} 不一致`);
+  }
+  if (!canDriver && drivers.length) {
+    warnings.push("can.driver 未设置；固件将使用默认驱动，请显式配置");
+  }
+  if (canNode.group_member_address || canNode.group_member_group) {
     warnings.push("检测到 group_member_address/group_member_group：当前固件不应再使用自动分组");
   }
-  if (y.motor1 && y0.sync !== y1.sync) warnings.push("Y0/Y1 sync_group 不一致");
+
+  const byName = {};
+  for (const axis of axes) byName[axis.name] = axis;
+  const axisCompat = (name) => {
+    const axis = byName[name] || { steps: null, motors: [] };
+    return {
+      steps: axis.steps,
+      motor0: axis.motors[0] || null,
+      motor1: axis.motors[1] || null,
+      motors: axis.motors,
+    };
+  };
 
   return {
-    x: {
-      steps: x.steps_per_mm ?? null,
-      motor: motorSummary(x.motor0, 1),
-    },
-    y: {
-      steps: y.steps_per_mm ?? null,
-      motor0: y0,
-      motor1: y.motor1 ? y1 : null,
-    },
-    z: {
-      steps: z.steps_per_mm ?? null,
-      motor: motorSummary(z.motor0, 4),
-    },
     can: {
-      baud: can.baud ?? null,
-      tx: can.tx_pin ?? null,
-      rx: can.rx_pin ?? null,
-      groupMemberAddress: can.group_member_address ?? 0,
-      groupMemberGroup: can.group_member_group ?? 0,
+      driver: canDriver,
+      driverLabel: canDriver ? protocolLabel(canDriver) : "",
+      baud: canNode.baud ?? null,
+      tx: canNode.tx_pin ?? null,
+      rx: canNode.rx_pin ?? null,
+      groupMemberAddress: canNode.group_member_address ?? 0,
+      groupMemberGroup: canNode.group_member_group ?? 0,
     },
+    axes,
+    drivers,
+    protocols,
     warnings,
+    // Backwards-compatible convenience views.
+    x: axisCompat("X"),
+    y: axisCompat("Y"),
+    z: axisCompat("Z"),
   };
 }
 
@@ -140,3 +231,5 @@ export function formatNumber(value, digits = 2) {
   const n = Number(value);
   return Number.isFinite(n) ? String(Number(n.toFixed(digits))) : String(value);
 }
+
+export { numberOrNull };

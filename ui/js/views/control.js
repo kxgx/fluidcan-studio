@@ -1,4 +1,6 @@
 import { exec } from "../core/transport.js";
+import { state } from "../core/store.js";
+import { addressesForAxis, allDriverAddresses, configAxisNames } from "../core/drivers.js";
 
 const $ = (id) => document.getElementById(id);
 export const logLines = [];
@@ -31,60 +33,80 @@ export async function sendQuick() {
   if (value) await sendCommand(value);
 }
 
-const ZERO_AXES = new Set(["X", "Y", "Z"]);
+function requireLayout() {
+  const layout = state.driverLayout;
+  if (!layout || !layout.count) {
+    throw new Error("尚未从 config.yaml 读取到驱动器配置，请先连接设备");
+  }
+  return layout;
+}
 
 // G10 L20 P1 sets the work-coordinate position for the selected axis.  It
-// changes offsets only; it never commands motion.
-export function zeroCommand(axis) {
+// changes offsets only; it never commands motion.  Axis names come from
+// config.yaml instead of a hard-coded X/Y/Z list.
+export function zeroCommand(axis, layout = state.driverLayout) {
   const name = String(axis || "").trim().toUpperCase();
-  if (!ZERO_AXES.has(name)) throw new Error(`不支持的清零轴: ${axis}`);
+  const axes = configAxisNames(layout);
+  if (!name) throw new Error(`不支持的清零轴: ${axis}`);
+  if (!axes.length) throw new Error("尚未从 config.yaml 读取轴配置");
+  if (!axes.includes(name)) throw new Error(`不支持的清零轴: ${axis}`);
   return `G10 L20 P1 ${name}0`;
 }
 
-export function zeroAllCommand() {
-  return "G10 L20 P1 X0 Y0 Z0";
+export function zeroAllCommand(layout = state.driverLayout) {
+  const axes = configAxisNames(layout);
+  if (!axes.length) throw new Error("尚未从 config.yaml 读取轴配置");
+  return "G10 L20 P1 " + axes.map((axis) => `${axis}0`).join(" ");
 }
 
-const DRIVER_ZERO_ADDRESS = Object.freeze({ X: "1", Y: "2,3", Z: "4" });
-
-export function driverZeroCommand(axis) {
+// Driver zero addresses come from the generic config.yaml motor blocks: an
+// axis may own several motors (dual Y), and the CAN bus supports up to 16
+// addresses.  No address mapping is hard-coded anymore.
+export function driverZeroCommand(axis, layout = state.driverLayout) {
   const name = String(axis || "").trim().toUpperCase();
-  const address = DRIVER_ZERO_ADDRESS[name];
-  if (!address) throw new Error(`不支持的驱动零位轴: ${axis}`);
-  return `$CANZero=${address}`;
+  const addresses = addressesForAxis(layout, name);
+  if (!addresses.length) throw new Error(`不支持的驱动零位轴: ${axis}`);
+  return `$CANZero=${addresses.join(",")}`;
 }
 
-export function driverZeroAllCommand() {
-  return "$CANZero=1,2,3,4";
+export function driverZeroAllCommand(layout = state.driverLayout) {
+  const addresses = allDriverAddresses(layout);
+  if (!addresses.length) throw new Error("尚未从 config.yaml 读取到 CAN 驱动器地址");
+  return `$CANZero=${addresses.join(",")}`;
 }
 
-async function zeroDriverAndCoordinate(axis) {
-  await sendCommand(driverZeroCommand(axis));
+async function zeroDriverAndCoordinate(axis, layout) {
+  await sendCommand(driverZeroCommand(axis, layout));
   await new Promise((resolve) => setTimeout(resolve, 400));
-  await sendCommand(zeroCommand(axis));
+  await sendCommand(zeroCommand(axis, layout));
 }
 
 export async function zeroDriverAxis(axis) {
+  const layout = requireLayout();
   const name = String(axis || "").trim().toUpperCase();
-  const address = DRIVER_ZERO_ADDRESS[name];
-  if (!address) throw new Error(`不支持的驱动零位轴: ${axis}`);
-  if (!confirm(`确定清零 ${name} 驱动器编码器位置？\n地址: ${address}\n此操作会改变绝对位置基准。`)) return;
-  return zeroDriverAndCoordinate(name);
+  const addresses = addressesForAxis(layout, name);
+  if (!addresses.length) throw new Error(`不支持的驱动零位轴: ${axis}`);
+  if (!confirm(`确定清零 ${name} 驱动器位置基准？\n地址: ${addresses.join(",")}\n此操作会改变绝对位置基准。`)) return;
+  return zeroDriverAndCoordinate(name, layout);
 }
 
 export async function zeroDriverAll() {
-  if (!confirm("确定清零 X/Y/Z 全部驱动器编码器位置？\n地址: 1,2,3,4\n此操作会改变绝对位置基准。")) return;
-  await sendCommand(driverZeroAllCommand());
+  const layout = requireLayout();
+  const addresses = allDriverAddresses(layout);
+  const axes = configAxisNames(layout).join("/");
+  if (!confirm(`确定清零 ${axes} 全部驱动器位置基准？\n地址: ${addresses.join(",")}\n此操作会改变绝对位置基准。`)) return;
+  await sendCommand(driverZeroAllCommand(layout));
   await new Promise((resolve) => setTimeout(resolve, 400));
-  await sendCommand(zeroAllCommand());
+  await sendCommand(zeroAllCommand(layout));
 }
 
 export async function zeroAxis(axis) {
-  return sendCommand(zeroCommand(axis));
+  return sendCommand(zeroCommand(axis, requireLayout()));
 }
 
 export async function zeroAll() {
-  return sendCommand(zeroAllCommand());
+  const layout = requireLayout();
+  return sendCommand(zeroAllCommand(layout));
 }
 
 export async function jog(direction) {

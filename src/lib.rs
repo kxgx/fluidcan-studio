@@ -3,12 +3,15 @@ use std::{
     io::{Read, Write},
     net::{IpAddr, Ipv4Addr, UdpSocket},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 
 use axum::{
-    extract::{Multipart, Path as AxPath, Request, State},
+    extract::{DefaultBodyLimit, Multipart, Path as AxPath, Query, Request, State},
     http::{header, StatusCode},
     middleware::{self, Next},
     response::{Html, IntoResponse, Response},
@@ -21,14 +24,6 @@ use sha2::{Digest, Sha256};
 use tower_http::trace::TraceLayer;
 
 #[derive(rust_embed::RustEmbed)]
-#[folder = "installer-dist/"]
-struct InstallerAssets;
-
-#[derive(rust_embed::RustEmbed)]
-#[folder = "firmware/"]
-struct FirmwareAssets;
-
-#[derive(rust_embed::RustEmbed)]
 #[folder = "ui/"]
 struct UiAssets;
 
@@ -36,9 +31,57 @@ include!(concat!(env!("OUT_DIR"), "/toolchain_versions.rs"));
 
 const DEFAULT_DEVICE: &str = "";
 const DEFAULT_PORT: u16 = 8088;
-const RELEASE_NAME: &str = "fluidcan-pcb5";
 const GITHUB_REPO: &str = "kxgx/FluidNC";
 const GITHUB_API: &str = "https://api.github.com";
+
+// Latency budget for the interactive paths.  The device answers ordinary
+// commands in <150 ms on a healthy WiFi link, so these only bound failure
+// cases; a wrong address should not make the user wait 20 seconds.
+const CONNECT_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+const STATUS_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+// CAN report commands can legitimately take tens of seconds when a driver is
+// unpowered; they run in the background in the UI, so allow them to finish.
+const CAN_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+
+// LAN discovery probes are intentionally cheap: many /24 addresses are probed
+// at once and FluidNC answers in well under a second.
+const SCAN_PROBE_TIMEOUT: Duration = Duration::from_millis(600);
+const SCAN_CONNECT_TIMEOUT: Duration = Duration::from_millis(400);
+const SCAN_CONCURRENCY: usize = 128;
+
+// In-app Web Serial flasher (esp-web-tools).  The browser fetches a generated
+// manifest + image from these endpoints, so no Python/esptool install is
+// needed for a factory-image flash.
+const WEB_FLASH_IMAGE_PATH: &str = "/api/install/web/image";
+const MAX_WEB_FLASH_BYTES: usize = 32 * 1024 * 1024;
+// Variants that ship a factory image (0.2.16+ release zips contain
+// USB/firmware.factory.bin for every variant; older releases only for some).
+const WEB_FLASH_VARIANTS: &[&str] = &[
+    "nopsram-oled-usb-4mb",
+    "quad-oled-usb-4mb",
+    "octal-oled-usb-4mb",
+    "quad-oled-usb",
+    "octal-oled-usb",
+    "quad-oled",
+    "octal-oled",
+    "quad",
+    "octal",
+];
+
+/// Query for the browser-facing Web Serial manifest/image endpoints.
+#[derive(Deserialize)]
+struct WebFlashQuery {
+    source: Option<String>,
+    tag: Option<String>,
+    variant: Option<String>,
+    asset: Option<String>,
+    token: Option<String>,
+    /// Comma-separated local package part names to flash (defaults to all
+    /// factory parts, or every part when no factory image is present).
+    parts: Option<String>,
+    /// Local package part name for the image endpoint.
+    name: Option<String>,
+}
 
 #[derive(Clone)]
 struct AppState {
@@ -139,10 +182,19 @@ async fn device_command(
     base: &str,
     command: &str,
 ) -> Result<String, String> {
+    device_command_timeout(client, base, command, Duration::from_secs(20)).await
+}
+
+async fn device_command_timeout(
+    client: &reqwest::Client,
+    base: &str,
+    command: &str,
+    timeout: Duration,
+) -> Result<String, String> {
     let resp = client
         .get(format!("{base}/command"))
         .query(&[("plain", command)])
-        .timeout(Duration::from_secs(20))
+        .timeout(timeout)
         .send()
         .await
         .map_err(|e| format!("设备请求失败: {e}"))?;
@@ -192,8 +244,7 @@ async fn health(State(st): State<Arc<AppState>>) -> Json<Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "default_device": current_base(&st).await,
         "mode": "gui",
-        "embedded_installer": true,
-        "embedded_firmware": true,
+        "web_serial_flash": true,
     }))
 }
 
@@ -208,7 +259,7 @@ async fn connect(State(st): State<Arc<AppState>>, Json(req): Json<ConnectReq>) -
             "error": "设备地址为空",
         }));
     }
-    let probe = device_command(&st.client, &requested, "$I").await;
+    let probe = device_command_timeout(&st.client, &requested, "$I", CONNECT_PROBE_TIMEOUT).await;
     match probe {
         Ok(text) => {
             *st.base.write().await = requested.clone();
@@ -230,33 +281,47 @@ async fn connect(State(st): State<Arc<AppState>>, Json(req): Json<ConnectReq>) -
     }
 }
 
+// Only the fields the UI needs, queried in parallel.  The previous version
+// also fetched `$$` and `$SS` (unused by the UI) sequentially, which doubled
+// the latency of the very first refresh after connecting.
 async fn get_status(State(st): State<Arc<AppState>>) -> Response {
     let base = current_base(&st).await;
-    let mut out = json!({ "base": base });
-    for (key, cmd) in [
-        ("build", "$I"),
-        ("state", "?"),
-        ("settings", "$$"),
-        ("startup", "$SS"),
-    ] {
-        out[key] = match device_command(&st.client, &base, cmd).await {
-            Ok(v) => json!(v),
-            Err(e) => json!({"error": e}),
-        };
-    }
-    Json(out).into_response()
+    let (build, state) = tokio::join!(
+        device_command_timeout(&st.client, &base, "$I", STATUS_COMMAND_TIMEOUT),
+        device_command_timeout(&st.client, &base, "?", STATUS_COMMAND_TIMEOUT),
+    );
+    let field = |result: Result<String, String>| match result {
+        Ok(v) => json!(v),
+        Err(e) => json!({"error": e}),
+    };
+    Json(json!({
+        "base": base,
+        "build": field(build),
+        "state": field(state),
+    }))
+    .into_response()
 }
 
-async fn get_can(State(st): State<Arc<AppState>>) -> Response {
+#[derive(Deserialize)]
+struct CanQuery {
+    // light=1 skips $CANDriverInfo, which the overview never renders and which
+    // is one of the slowest report commands on an unpowered bus.
+    light: Option<u8>,
+}
+
+async fn get_can(State(st): State<Arc<AppState>>, Query(query): Query<CanQuery>) -> Response {
     let base = current_base(&st).await;
-    let mut out = json!({ "base": base });
-    for (key, cmd) in [
+    let mut commands: Vec<(&str, &str)> = vec![
         ("status", "$CANStatus"),
         ("faults", "$CANFaults"),
         ("positions", "$CANPos"),
-        ("drivers", "$CANDriverInfo"),
-    ] {
-        out[key] = match device_command(&st.client, &base, cmd).await {
+    ];
+    if query.light != Some(1) {
+        commands.push(("drivers", "$CANDriverInfo"));
+    }
+    let mut out = json!({ "base": base });
+    for (key, cmd) in commands {
+        out[key] = match device_command_timeout(&st.client, &base, cmd, CAN_COMMAND_TIMEOUT).await {
             Ok(v) => json!(v),
             Err(e) => json!({"error": e}),
         };
@@ -462,25 +527,6 @@ async fn serial_log(State(st): State<Arc<AppState>>) -> Json<Value> {
     Json(json!({"log": log}))
 }
 
-async fn firmware_info(State(_st): State<Arc<AppState>>) -> Json<Value> {
-    let mut files = Vec::new();
-    for name in [
-        "firmware.bin",
-        "firmware.factory.bin",
-        "bootloader.bin",
-        "partitions.bin",
-    ] {
-        if let Some(f) = FirmwareAssets::get(name) {
-            files.push(json!({
-                "name": name,
-                "size": f.data.len(),
-                "source": "embedded"
-            }));
-        }
-    }
-    Json(json!({"source": "embedded", "files": files}))
-}
-
 async fn upload_firmware(st: &AppState, data: Vec<u8>, name: String) -> Result<Value, String> {
     let base = current_base(st).await;
     let part = reqwest::multipart::Part::bytes(data)
@@ -501,6 +547,128 @@ async fn upload_firmware(st: &AppState, data: Vec<u8>, name: String) -> Result<V
     Ok(json!({"http": status.as_u16(), "response": text}))
 }
 
+fn is_zip_upload(data: &[u8], uploaded_name: &str) -> bool {
+    uploaded_name.to_ascii_lowercase().ends_with(".zip") || data.starts_with(b"PK\x03\x04")
+}
+
+fn normalized_zip_path(name: &str) -> String {
+    name.replace('\\', "/").to_ascii_lowercase()
+}
+
+/// Read the first zip entry whose normalized path matches `wanted`.
+fn read_zip_member(
+    data: &[u8],
+    wanted: impl Fn(&str) -> bool,
+) -> Result<Option<(String, Vec<u8>)>, String> {
+    let cursor = std::io::Cursor::new(data);
+    let mut archive = zip::ZipArchive::new(cursor).map_err(|e| format!("读取 zip 失败: {e}"))?;
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|e| format!("读取 zip 条目失败: {e}"))?;
+        if entry.is_dir() {
+            continue;
+        }
+        let path = normalized_zip_path(entry.name());
+        if !wanted(&path) {
+            continue;
+        }
+        if entry.size() as usize > MAX_WEB_FLASH_BYTES {
+            return Err(format!("zip 条目 {} 超过 32 MB 限制", entry.name()));
+        }
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut bytes)
+            .map_err(|e| format!("解压 {} 失败: {e}", entry.name()))?;
+        if bytes.is_empty() || bytes.len() > MAX_WEB_FLASH_BYTES {
+            return Err(format!("zip 条目 {} 大小无效", entry.name()));
+        }
+        return Ok(Some((entry.name().replace('\\', "/"), bytes)));
+    }
+    Ok(None)
+}
+
+/// A can-v0.2.16+ release .zip contains `<variant>/OTA/firmware.bin`; older
+/// releases used a loose app image (firmware.bin).  Both are accepted.
+fn extract_ota_image(data: &[u8], uploaded_name: &str) -> Result<(String, Vec<u8>), String> {
+    if data.is_empty() {
+        return Err("固件文件为空".to_string());
+    }
+    if data.len() > MAX_WEB_FLASH_BYTES {
+        return Err("固件文件超过 32 MB 限制".to_string());
+    }
+    if !is_zip_upload(data, uploaded_name) {
+        return Ok((uploaded_name.to_string(), data.to_vec()));
+    }
+    if let Some((path, bytes)) = read_zip_member(data, |path| {
+        path.ends_with("/ota/firmware.bin") || path == "ota/firmware.bin"
+    })? {
+        return Ok((path, bytes));
+    }
+    // Fallback for older/ad-hoc zips: any firmware.bin outside USB/.
+    if let Some((path, bytes)) = read_zip_member(data, |path| {
+        (path.ends_with("/firmware.bin") || path == "firmware.bin") && !path.contains("/usb/")
+    })? {
+        return Ok((path, bytes));
+    }
+    Err("zip 中没有 OTA 应用镜像（需要 OTA/firmware.bin；这是 can-v0.2.16 起的 Release 包格式）".to_string())
+}
+
+/// Extract the full USB factory image from a release .zip.
+fn extract_usb_factory(data: &[u8]) -> Result<Option<(String, Vec<u8>)>, String> {
+    read_zip_member(data, |path| {
+        path.ends_with("/usb/firmware.factory.bin")
+            || path == "usb/firmware.factory.bin"
+            || path.ends_with("/firmware.factory.bin")
+            || path == "firmware.factory.bin"
+    })
+}
+
+fn release_zip_variant(variant: &str) -> String {
+    let variant = variant.trim();
+    if variant.is_empty() || variant == "default" {
+        // The default env (wifi_s3_oled) is released as quad-oled.zip.
+        "quad-oled".to_string()
+    } else {
+        variant.to_string()
+    }
+}
+
+fn release_zip_name(tag: &str, variant: &str) -> String {
+    format!("fluidcan-{tag}-{}.zip", release_zip_variant(variant))
+}
+
+async fn download_release_bytes(url: &str, timeout_secs: u64) -> Result<Vec<u8>, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
+    let resp = client
+        .get(url)
+        .header(reqwest::header::USER_AGENT, "FluidCAN-Studio")
+        .send()
+        .await
+        .map_err(|e| format!("下载失败: {e}"))?;
+    let status = resp.status();
+    let data = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("读取下载内容失败: {e}"))?
+        .to_vec();
+    if !status.is_success() || data.is_empty() {
+        return Err(format!("下载失败 HTTP {status}"));
+    }
+    if data.len() > MAX_WEB_FLASH_BYTES {
+        return Err("下载文件超过 32 MB 限制".to_string());
+    }
+    Ok(data)
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hex::encode(hasher.finalize())
+}
+
 async fn ota_update(
     State(st): State<Arc<AppState>>,
     mut multipart: Multipart,
@@ -517,10 +685,18 @@ async fn ota_update(
         data = Some(bytes.to_vec());
     }
     let data = data.ok_or_else(|| err("没有收到固件文件"))?;
-    let result = upload_firmware(&st, data, name)
+    let (source, image) = extract_ota_image(&data, &name).map_err(err)?;
+    let size = image.len();
+    let sha = sha256_hex(&image);
+    let result = upload_firmware(&st, image, "firmware.bin".to_string())
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, Json(ApiError { error: e })))?;
-    Ok(Json(result))
+    Ok(Json(json!({
+        "source": source,
+        "size": size,
+        "sha256": sha,
+        "ota": result,
+    })))
 }
 
 
@@ -555,11 +731,17 @@ fn scan_local_ipv4s() -> Vec<Ipv4Addr> {
     out
 }
 
-async fn probe_fluidnc(ip: Ipv4Addr) -> Option<Value> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(900))
+// One shared client for the whole discovery sweep: building a reqwest Client
+// per address was a large part of the old ~7 s scan time.
+fn scan_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(SCAN_CONNECT_TIMEOUT)
+        .timeout(SCAN_PROBE_TIMEOUT)
         .build()
-        .ok()?;
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
+async fn probe_fluidnc(client: &reqwest::Client, ip: Ipv4Addr) -> Option<Value> {
     let url = format!("http://{ip}/command?plain=%24I");
     let resp = client.get(&url).send().await.ok()?;
     if !resp.status().is_success() {
@@ -582,9 +764,9 @@ async fn probe_fluidnc(ip: Ipv4Addr) -> Option<Value> {
     }))
 }
 
-async fn scan_subnet(local: Ipv4Addr) -> Vec<Value> {
+async fn scan_subnet(client: reqwest::Client, local: Ipv4Addr) -> Vec<Value> {
     let octets = local.octets();
-    let sem = Arc::new(tokio::sync::Semaphore::new(32));
+    let sem = Arc::new(tokio::sync::Semaphore::new(SCAN_CONCURRENCY));
     let mut set = tokio::task::JoinSet::new();
     for host in 1u8..=254 {
         if host == octets[3] {
@@ -592,9 +774,10 @@ async fn scan_subnet(local: Ipv4Addr) -> Vec<Value> {
         }
         let ip = Ipv4Addr::new(octets[0], octets[1], octets[2], host);
         let sem = sem.clone();
+        let client = client.clone();
         set.spawn(async move {
             let _permit = sem.acquire_owned().await.ok()?;
-            probe_fluidnc(ip).await
+            probe_fluidnc(&client, ip).await
         });
     }
     let mut devices = Vec::new();
@@ -617,6 +800,7 @@ async fn scan_devices() -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
     if candidates.is_empty() {
         return Err(err("无法确定本机局域网地址，请手动输入设备地址"));
     }
+    let client = scan_client();
     let mut scanned = Vec::new();
     let mut devices = Vec::new();
     for local in &candidates {
@@ -626,7 +810,9 @@ async fn scan_devices() -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
             local.octets()[1],
             local.octets()[2]
         ));
-        devices = scan_subnet(*local).await;
+        // Subnets are tried in priority order (default-route LAN first) and
+        // the sweep stops as soon as a device is found.
+        devices = scan_subnet(client.clone(), *local).await;
         if !devices.is_empty() {
             break;
         }
@@ -795,61 +981,58 @@ async fn remote_ota(
     State(st): State<Arc<AppState>>,
     Json(req): Json<RemoteOtaReq>,
 ) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
-    let releases = fetch_remote_releases()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, Json(ApiError { error: e })))?;
-    let release = releases
-        .into_iter()
-        .find(|r| r.tag == req.tag)
-        .ok_or_else(|| err(format!("找不到版本 {}", req.tag)))?;
+    let tag = req.tag.trim().to_string();
+    if !is_version_tag(&tag) {
+        return Err(err("版本 tag 格式无效"));
+    }
     let variant = req.variant.unwrap_or_else(|| "default".to_string());
     if variant_is_4mb(&variant) {
         return Err(err(format!(
-            "{} 是 4 MB 单 app 分区版本，不能网络 OTA；请使用串口烧录",
+            "{} 是 4 MB 单 app 分区版本，不能网络 OTA；请使用串口或 Web Serial 烧录 USB factory 镜像",
             variant
         )));
     }
-    let asset_name = ota_asset_name(&variant);
-    let asset_url = release
-        .assets
-        .iter()
-        .find(|a| a.name == asset_name)
-        .map(|a| a.url.clone())
-        .unwrap_or_else(|| {
-            // The releases.atom fallback has no asset list; construct the
-            // variant URL and let the download verify that it exists.
-            format!(
-                "https://github.com/{GITHUB_REPO}/releases/download/{}/{}",
-                release.tag, asset_name
-            )
-        });
-    let resp = reqwest::Client::new()
-        .get(&asset_url)
-        .header(reqwest::header::USER_AGENT, "FluidCAN-Studio")
-        .timeout(Duration::from_secs(180))
-        .send()
-        .await
-        .map_err(|e| err(format!("下载固件失败: {e}")))?;
-    let status = resp.status();
-    let data = resp
-        .bytes()
-        .await
-        .map_err(|e| err(format!("读取固件失败: {e}")))?
-        .to_vec();
-    if !status.is_success() || data.is_empty() {
-        return Err(err(format!(
-            "下载固件失败 HTTP {status}, {} bytes",
-            data.len()
-        )));
-    }
-    let result = upload_firmware(&st, data, "firmware.bin".to_string())
+    let zip_name = release_zip_name(&tag, &variant);
+    let zip_url = format!(
+        "https://github.com/{GITHUB_REPO}/releases/download/{tag}/{zip_name}"
+    );
+    // can-v0.2.16+ publishes only structured per-variant zips.  Fall back to
+    // the old loose app image for older tags.
+    let (source, image) = match download_release_bytes(&zip_url, 180).await {
+        Ok(zip) => extract_ota_image(&zip, &zip_name).map_err(err)?,
+        Err(zip_err) => {
+            let old_asset = ota_asset_name(&variant);
+            let old_url = format!(
+                "https://github.com/{GITHUB_REPO}/releases/download/{tag}/{old_asset}"
+            );
+            match download_release_bytes(&old_url, 180).await {
+                Ok(data) => (old_asset, data),
+                Err(old_err) => {
+                    return Err((
+                        StatusCode::BAD_GATEWAY,
+                        Json(ApiError {
+                            error: format!(
+                                "下载 OTA 包失败：结构化 zip（{zip_name}）: {zip_err}；旧格式（{old_asset}）: {old_err}"
+                            ),
+                        }),
+                    ))
+                }
+            }
+        }
+    };
+    let size = image.len();
+    let sha = sha256_hex(&image);
+    let result = upload_firmware(&st, image, "firmware.bin".to_string())
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, Json(ApiError { error: e })))?;
     Ok(Json(json!({
-        "version": release.version,
-        "tag": release.tag,
-        "asset": asset_name,
+        "version": tag.trim_start_matches("can-v"),
+        "tag": tag,
         "variant": variant,
+        "asset": zip_name,
+        "source": source,
+        "size": size,
+        "sha256": sha,
         "ota": result,
     })))
 }
@@ -976,25 +1159,13 @@ async fn ensure_official_esptool(st: &AppState) -> Result<Option<PathBuf>, Strin
     Ok(Some(tool))
 }
 
-async fn flash_serial(
-    State(st): State<Arc<AppState>>,
-    Json(req): Json<FlashReq>,
+async fn run_esptool_flash(
+    st: &AppState,
+    port: &str,
+    baud: u32,
+    firmware: &Path,
 ) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
-    let firmware = if let Some(path) = req.firmware {
-        let p = PathBuf::from(path);
-        if !p.exists() {
-            return Err(err(format!("固件不存在: {}", p.display())));
-        }
-        p
-    } else {
-        let data = FirmwareAssets::get("firmware.factory.bin")
-            .ok_or_else(|| err("内置固件中找不到 firmware.factory.bin"))?;
-        let p = std::env::temp_dir().join(format!("fluidcan-flash-{}.bin", std::process::id()));
-        std::fs::write(&p, data.data).map_err(|e| err(format!("写入临时固件失败: {e}")))?;
-        p
-    };
-    let baud = req.baud.unwrap_or(460800);
-    let official = ensure_official_esptool(&st).await;
+    let official = ensure_official_esptool(st).await;
     let mut official_tool = None;
     let mut cmd = match official {
         Ok(Some(tool)) => {
@@ -1012,7 +1183,7 @@ async fn flash_serial(
         "--chip",
         "esp32s3",
         "--port",
-        &req.port,
+        port,
         "--baud",
         &baud.to_string(),
         "--before",
@@ -1028,7 +1199,7 @@ async fn flash_serial(
         "keep",
         "0x0",
     ]);
-    cmd.arg(&firmware);
+    cmd.arg(firmware);
     let out = cmd
         .output()
         .map_err(|e| err(format!("启动 esptool 失败: {e}")))?;
@@ -1039,98 +1210,614 @@ async fn flash_serial(
         "code": out.status.code(),
         "stdout": stdout,
         "stderr": stderr,
-        "firmware": firmware,
+        "firmware": firmware.to_string_lossy(),
         "official_esptool": official_tool.as_ref().map(|p| p.to_string_lossy().to_string()),
     })))
 }
 
-fn firmware_factory_bytes() -> Result<Vec<u8>, String> {
-    FirmwareAssets::get("firmware.factory.bin")
-        .map(|f| f.data.into_owned())
-        .ok_or_else(|| "内置固件中找不到 firmware.factory.bin".to_string())
-}
-
-async fn installer_releases() -> Json<Value> {
-    Json(json!([{
-        "id": 1,
-        "name": RELEASE_NAME,
-        "body": "FluidCAN Studio custom ESP32-S3 CAN firmware",
-        "url": "",
-        "draft": false,
-        "prerelease": false,
-        "created_at": "2026-10-30T00:00:00Z",
-        "published_at": "2026-10-30T00:00:00Z"
-    }]))
-}
-
-
-async fn installer_manifest(
-    State(_st): State<Arc<AppState>>,
-    AxPath(release): AxPath<String>,
-) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
-    if release != RELEASE_NAME {
-        return Err(err("未知的安装包"));
+/// Extract the factory image from a local upload (.bin or .zip with a
+/// standard-named factory file) for the backend esptool serial flasher.
+fn factory_image_from_upload(data: &[u8], uploaded_name: &str) -> Result<(String, Vec<u8>), String> {
+    if data.is_empty() {
+        return Err("固件文件为空".to_string());
     }
-    let data = firmware_factory_bytes().map_err(err)?;
-    let mut h = Sha256::new();
-    h.update(&data);
-    let sha = hex::encode(h.finalize());
-    let size = data.len() as u64;
-    Ok(Json(json!({
-        "name": "FluidCAN",
-        "version": "can-motor-driver / PCB5",
-        "source_url": "",
-        "release_url": "",
-        "images": {
-            "fluidcan-factory": {
-                "size": size,
-                "offset": "0x0",
-                "path": "firmware.factory.bin",
-                "signature": {"algorithm": "SHA2-256", "value": sha}
-            }
-        },
-        "installable": {
-            "name": "installable",
-            "description": "FluidCAN firmware",
-            "choice-name": "Processor type",
-            "choices": [{
-                "name": "esp32s3",
-                "description": "ESP32-S3-WROOM-1",
-                "choice-name": "安装方式",
-                "choices": [{
-                    "name": "can-full",
-                    "description": "完整写入 CAN 固件（factory image @ 0x0）",
-                    "erase": true,
-                    "images": ["fluidcan-factory"]
-                }]
-            }]
+    if data.len() > MAX_WEB_FLASH_BYTES {
+        return Err("固件文件超过 32 MB 限制".to_string());
+    }
+    let is_zip = uploaded_name.to_ascii_lowercase().ends_with(".zip") || data.starts_with(b"PK\x03\x04");
+    if !is_zip {
+        let base = web_flash_base_name(uploaded_name);
+        let lower = base.to_ascii_lowercase();
+        if lower != "firmware.factory.bin" && lower != "factory.bin" {
+            return Err(format!(
+                "串口 esptool 烧录需要 factory 镜像（firmware.factory.bin / factory.bin），当前文件名: {base}"
+            ));
         }
+        return Ok((base, data.to_vec()));
+    }
+    let cursor = std::io::Cursor::new(data);
+    let mut archive = zip::ZipArchive::new(cursor).map_err(|e| format!("读取 zip 失败: {e}"))?;
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|e| format!("读取 zip 条目失败: {e}"))?;
+        if entry.is_dir() {
+            continue;
+        }
+        let base = web_flash_base_name(entry.name());
+        let lower = base.to_ascii_lowercase();
+        if lower == "firmware.factory.bin" || lower == "factory.bin" {
+            if entry.size() as usize > MAX_WEB_FLASH_BYTES {
+                return Err("factory 镜像超过 32 MB 限制".to_string());
+            }
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut entry, &mut bytes)
+                .map_err(|e| format!("解压 {base} 失败: {e}"))?;
+            if bytes.is_empty() || bytes.len() > MAX_WEB_FLASH_BYTES {
+                return Err("factory 镜像大小无效".to_string());
+            }
+            return Ok((base, bytes));
+        }
+    }
+    Err("zip 中没有 firmware.factory.bin（串口 esptool 烧录需要 factory 镜像）".to_string())
+}
+
+async fn flash_serial(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<FlashReq>,
+) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
+    let Some(path) = req.firmware else {
+        return Err(err("内置固件已移除：请上传本地固件，或使用 Web Serial 烧录"));
+    };
+    let firmware = PathBuf::from(path);
+    if !firmware.is_file() {
+        return Err(err(format!("固件不存在: {}", firmware.display())));
+    }
+    run_esptool_flash(&st, &req.port, req.baud.unwrap_or(460800), &firmware).await
+}
+
+async fn flash_local(
+    State(st): State<Arc<AppState>>,
+    mut multipart: Multipart,
+) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
+    let mut data: Option<Vec<u8>> = None;
+    let mut name = String::from("firmware.factory.bin");
+    let mut port = String::new();
+    let mut baud = 460800u32;
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| err(format!("解析上传失败: {e}")))?
+    {
+        let field_name = field.name().unwrap_or("").to_string();
+        if field_name == "port" {
+            port = field
+                .text()
+                .await
+                .map_err(|e| err(format!("读取串口字段失败: {e}")))?
+                .trim()
+                .to_string();
+            continue;
+        }
+        if field_name == "baud" {
+            if let Ok(text) = field.text().await {
+                baud = text.trim().parse().unwrap_or(460800);
+            }
+            continue;
+        }
+        if let Some(file_name) = field.file_name() {
+            if !file_name.is_empty() {
+                name = file_name.to_string();
+            }
+        }
+        let bytes = field
+            .bytes()
+            .await
+            .map_err(|e| err(format!("读取上传失败: {e}")))?;
+        if bytes.len() > MAX_WEB_FLASH_BYTES {
+            return Err(err("固件文件超过 32 MB 限制"));
+        }
+        data = Some(bytes.to_vec());
+    }
+    let data = data.ok_or_else(|| err("没有收到固件文件"))?;
+    if port.trim().is_empty() {
+        return Err(err("缺少串口端口"));
+    }
+    let (factory_name, factory) = factory_image_from_upload(&data, &name).map_err(err)?;
+    let token = web_flash_token();
+    let path = std::env::temp_dir().join(format!("fluidcan-flashlocal-{token}.bin"));
+    std::fs::write(&path, &factory).map_err(|e| err(format!("写入临时固件失败: {e}")))?;
+    let result = run_esptool_flash(&st, port.trim(), baud, &path).await;
+    let _ = std::fs::remove_file(&path);
+    let Json(mut value) = result?;
+    value["firmware"] = json!(factory_name);
+    Ok(Json(value))
+}
+
+// ---------------------------------------------------------------------------
+// Local firmware packages for the in-app Web Serial flasher.
+//
+// Studio no longer bundles firmware.  The user supplies either a .zip archive
+// containing standard-named files or a single standard-named .bin, then picks
+// which partitions to flash.  Standard names / ESP32-S3 offsets:
+//   firmware.factory.bin / factory.bin  -> 0x0    (whole factory image)
+//   bootloader.bin                      -> 0x0
+//   partitions.bin                      -> 0x8000
+//   boot_app0.bin                       -> 0xE000
+//   firmware.bin / app.bin              -> 0x10000
+// ---------------------------------------------------------------------------
+
+const WEB_FLASH_STANDARD_NAMES: &[(&str, &str, u32)] = &[
+    ("firmware.factory.bin", "整片 factory（0x0）", 0x0),
+    ("factory.bin", "整片 factory（0x0）", 0x0),
+    ("bootloader.bin", "bootloader（0x0）", 0x0),
+    ("partitions.bin", "分区表（0x8000）", 0x8000),
+    ("boot_app0.bin", "boot_app0（0xE000）", 0xE000),
+    ("firmware.bin", "应用 firmware（0x10000）", 0x10000),
+    ("app.bin", "应用 firmware（0x10000）", 0x10000),
+];
+
+#[derive(Clone, Serialize, Deserialize)]
+struct WebFlashPart {
+    name: String,
+    label: String,
+    offset: u32,
+    size: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct WebFlashPackage {
+    kind: String,
+    parts: Vec<WebFlashPart>,
+    defaults: Vec<String>,
+    warnings: Vec<String>,
+}
+
+fn web_flash_token() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let mut h = Sha256::new();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    h.update(nanos.to_le_bytes());
+    h.update(std::process::id().to_le_bytes());
+    h.update(COUNTER.fetch_add(1, Ordering::Relaxed).to_le_bytes());
+    hex::encode(h.finalize())[..32].to_string()
+}
+
+fn web_flash_base_name(name: &str) -> String {
+    Path::new(name)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(name)
+        .to_string()
+}
+
+fn web_flash_recognize(name: &str) -> Option<(String, String, u32)> {
+    let base = web_flash_base_name(name).to_ascii_lowercase();
+    WEB_FLASH_STANDARD_NAMES
+        .iter()
+        .find(|(standard, _, _)| *standard == base)
+        .map(|(standard, label, offset)| (standard.to_string(), label.to_string(), *offset))
+}
+
+fn web_flash_package_dir(token: &str) -> Result<PathBuf, String> {
+    let token = token.trim();
+    if token.len() != 32 || !token.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("本地固件令牌无效".to_string());
+    }
+    let dir = std::env::temp_dir().join(format!("fluidcan-webflash-local-{token}"));
+    if !dir.is_dir() {
+        return Err("本地固件已失效，请重新上传".to_string());
+    }
+    Ok(dir)
+}
+
+fn read_web_flash_package(token: &str) -> Result<WebFlashPackage, String> {
+    let dir = web_flash_package_dir(token)?;
+    let text = std::fs::read_to_string(dir.join("parts.json"))
+        .map_err(|e| format!("读取本地固件元数据失败: {e}"))?;
+    serde_json::from_str(&text).map_err(|e| format!("解析本地固件元数据失败: {e}"))
+}
+
+fn cleanup_old_web_flash_uploads() {
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.starts_with("fluidcan-webflash-local-") {
+            continue;
+        }
+        let expired = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok())
+            .map(|age| age.as_secs() > 2 * 3600)
+            .unwrap_or(true);
+        if expired {
+            let path = entry.path();
+            if path.is_dir() {
+                let _ = std::fs::remove_dir_all(path);
+            } else {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+}
+
+struct CollectedWebFlash {
+    kind: String,
+    parts: Vec<WebFlashPart>,
+    defaults: Vec<String>,
+    warnings: Vec<String>,
+    files: Vec<(String, Vec<u8>)>,
+}
+
+fn collect_web_flash_parts(data: &[u8], uploaded_name: &str) -> Result<CollectedWebFlash, String> {
+    if data.is_empty() {
+        return Err("固件文件为空".to_string());
+    }
+    if data.len() > MAX_WEB_FLASH_BYTES {
+        return Err("固件文件超过 32 MB 限制".to_string());
+    }
+    let is_zip = uploaded_name.to_ascii_lowercase().ends_with(".zip") || data.starts_with(b"PK\x03\x04");
+    let mut parts: Vec<WebFlashPart> = Vec::new();
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    let mut ignored: Vec<String> = Vec::new();
+
+    if is_zip {
+        let cursor = std::io::Cursor::new(data);
+        let mut archive = zip::ZipArchive::new(cursor).map_err(|e| format!("读取 zip 失败: {e}"))?;
+        let mut total = 0usize;
+        for index in 0..archive.len() {
+            let mut entry = archive
+                .by_index(index)
+                .map_err(|e| format!("读取 zip 条目失败: {e}"))?;
+            if entry.is_dir() {
+                continue;
+            }
+            let base = web_flash_base_name(entry.name());
+            let Some((name, label, offset)) = web_flash_recognize(&base) else {
+                ignored.push(base);
+                continue;
+            };
+            if entry.size() as usize > MAX_WEB_FLASH_BYTES {
+                return Err(format!("{name} 超过 32 MB 限制"));
+            }
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut entry, &mut bytes)
+                .map_err(|e| format!("解压 {name} 失败: {e}"))?;
+            if bytes.is_empty() || bytes.len() > MAX_WEB_FLASH_BYTES {
+                return Err(format!("{name} 大小无效"));
+            }
+            total += bytes.len();
+            if total > MAX_WEB_FLASH_BYTES {
+                return Err("固件包解压后超过 32 MB 限制".to_string());
+            }
+            if parts.iter().any(|part| part.name == name) {
+                warnings.push(format!("zip 中 {name} 重复，已忽略后一个"));
+                continue;
+            }
+            parts.push(WebFlashPart {
+                name: name.clone(),
+                label,
+                offset,
+                size: bytes.len() as u64,
+            });
+            files.push((name, bytes));
+        }
+        if parts.is_empty() {
+            let hint = if ignored.is_empty() {
+                String::new()
+            } else {
+                format!("；未识别的文件: {}", ignored.join(", "))
+            };
+            return Err(format!(
+                "zip 中没有标准命名的固件文件（firmware.factory.bin / bootloader.bin / partitions.bin / boot_app0.bin / firmware.bin）{hint}"
+            ));
+        }
+    } else {
+        let base = web_flash_base_name(uploaded_name);
+        let Some((name, label, offset)) = web_flash_recognize(&base) else {
+            return Err(format!(
+                "文件名 {base} 不符合标准命名（firmware.factory.bin / bootloader.bin / partitions.bin / boot_app0.bin / firmware.bin / app.bin）"
+            ));
+        };
+        parts.push(WebFlashPart {
+            name: name.clone(),
+            label,
+            offset,
+            size: data.len() as u64,
+        });
+        files.push((name, data.to_vec()));
+    }
+
+    let factory_name = parts
+        .iter()
+        .find(|part| part.name == "firmware.factory.bin" || part.name == "factory.bin")
+        .map(|part| part.name.clone());
+    let defaults: Vec<String> = match factory_name {
+        Some(name) => vec![name],
+        None => parts.iter().map(|part| part.name.clone()).collect(),
+    };
+    if defaults.first().map(|name| name == "firmware.factory.bin" || name == "factory.bin") != Some(true) {
+        let has_boot = parts.iter().any(|part| part.name == "bootloader.bin");
+        let has_partitions = parts.iter().any(|part| part.name == "partitions.bin");
+        let has_app = parts.iter().any(|part| part.name == "firmware.bin" || part.name == "app.bin");
+        if !(has_boot && has_partitions && has_app) {
+            warnings.push(
+                "未包含 firmware.factory.bin，且分区组件不完整；只选择部分分区烧录时请确认偏移与设备匹配"
+                    .to_string(),
+            );
+        }
+    }
+
+    Ok(CollectedWebFlash {
+        kind: if is_zip { "zip".to_string() } else { "bin".to_string() },
+        parts,
+        defaults,
+        warnings,
+        files,
+    })
+}
+
+async fn install_web_upload(
+    State(_st): State<Arc<AppState>>,
+    mut multipart: Multipart,
+) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
+    let mut data: Option<Vec<u8>> = None;
+    let mut name = String::from("firmware.factory.bin");
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| err(format!("解析上传失败: {e}")))?
+    {
+        if let Some(file_name) = field.file_name() {
+            if !file_name.is_empty() {
+                name = file_name.to_string();
+            }
+        }
+        let bytes = field
+            .bytes()
+            .await
+            .map_err(|e| err(format!("读取上传失败: {e}")))?;
+        if bytes.len() > MAX_WEB_FLASH_BYTES {
+            return Err(err("固件文件超过 32 MB 限制"));
+        }
+        data = Some(bytes.to_vec());
+        break;
+    }
+    let data = data.ok_or_else(|| err("没有收到固件文件"))?;
+    cleanup_old_web_flash_uploads();
+    let collected = collect_web_flash_parts(&data, &name).map_err(err)?;
+    let token = web_flash_token();
+    let dir = std::env::temp_dir().join(format!("fluidcan-webflash-local-{token}"));
+    std::fs::create_dir_all(&dir).map_err(|e| err(format!("创建本地固件目录失败: {e}")))?;
+    for (file_name, bytes) in &collected.files {
+        std::fs::write(dir.join(file_name), bytes)
+            .map_err(|e| err(format!("保存 {file_name} 失败: {e}")))?;
+    }
+    let package = WebFlashPackage {
+        kind: collected.kind.clone(),
+        parts: collected.parts.clone(),
+        defaults: collected.defaults.clone(),
+        warnings: collected.warnings.clone(),
+    };
+    std::fs::write(
+        dir.join("parts.json"),
+        serde_json::to_vec(&package).map_err(|e| err(format!("写入本地固件元数据失败: {e}")))?,
+    )
+    .map_err(|e| err(format!("写入本地固件元数据失败: {e}")))?;
+    Ok(Json(json!({
+        "ok": true,
+        "token": token,
+        "kind": collected.kind,
+        "parts": collected.parts,
+        "defaults": collected.defaults,
+        "warnings": collected.warnings,
     })))
 }
 
-async fn installer_firmware(
+fn web_flash_manifest_parts(name: &str, version: &str, parts: Vec<Value>) -> Value {
+    json!({
+        "name": name,
+        "version": version,
+        "builds": [{
+            "chipFamily": "ESP32-S3",
+            "parts": parts,
+        }],
+    })
+}
+
+fn web_flash_asset_name(variant: &str) -> Result<String, String> {
+    let variant = variant.trim();
+    if variant.is_empty() || variant == "default" {
+        return Ok("firmware.factory.bin".to_string());
+    }
+    if !WEB_FLASH_VARIANTS.contains(&variant) {
+        return Err(format!(
+            "Web Serial 烧录不支持变体 {variant}：该变体没有 factory 镜像，请使用网络 OTA 或选择 4 MB 变体"
+        ));
+    }
+    Ok(format!("{variant}-firmware.factory.bin"))
+}
+
+fn web_flash_asset_allowed(asset: &str) -> bool {
+    asset == "firmware.factory.bin"
+        || WEB_FLASH_VARIANTS
+            .iter()
+            .any(|variant| asset == format!("{variant}-firmware.factory.bin"))
+}
+
+async fn web_flash_remote_factory(
+    st: &AppState,
+    tag: &str,
+    variant: &str,
+    asset: &str,
+) -> Result<Vec<u8>, String> {
+    let cache = std::env::temp_dir().join(format!("fluidcan-webflash-{tag}-{asset}"));
+    if let Ok(meta) = std::fs::metadata(&cache) {
+        if meta.is_file() && meta.len() > 0 && meta.len() as usize <= MAX_WEB_FLASH_BYTES {
+            if let Ok(data) = std::fs::read(&cache) {
+                return Ok(data);
+            }
+        }
+    }
+    // Releases <= 0.2.15 had loose *-firmware.factory.bin assets.
+    let direct_url = format!("https://github.com/{GITHUB_REPO}/releases/download/{tag}/{asset}");
+    let direct = async {
+        let resp = st
+            .client
+            .get(&direct_url)
+            .header(reqwest::header::USER_AGENT, "FluidCAN-Studio")
+            .timeout(Duration::from_secs(120))
+            .send()
+            .await
+            .map_err(|e| format!("旧版直接镜像下载失败: {e}"))?;
+        let status = resp.status();
+        let data = resp
+            .bytes()
+            .await
+            .map_err(|e| format!("读取旧版直接镜像失败: {e}"))?
+            .to_vec();
+        if !status.is_success() || data.is_empty() {
+            return Err(format!("旧版直接镜像 HTTP {status}"));
+        }
+        Ok(data)
+    }
+    .await;
+    match direct {
+        Ok(data) => {
+            if data.len() > MAX_WEB_FLASH_BYTES {
+                return Err("factory 镜像超过 32 MB 限制".to_string());
+            }
+            let _ = std::fs::write(&cache, &data);
+            Ok(data)
+        }
+        Err(direct_err) => {
+            // can-v0.2.16+ only publishes structured per-variant zips.
+            let zip_name = release_zip_name(tag, variant);
+            let zip_url =
+                format!("https://github.com/{GITHUB_REPO}/releases/download/{tag}/{zip_name}");
+            let zip = download_release_bytes(&zip_url, 180)
+                .await
+                .map_err(|zip_err| format!("{direct_err}; 新版 zip 下载失败: {zip_err}"))?;
+            let (_path, factory) = extract_usb_factory(&zip)?
+                .ok_or_else(|| format!("{zip_name} 中没有 USB/firmware.factory.bin"))?;
+            if factory.len() > MAX_WEB_FLASH_BYTES {
+                return Err("factory 镜像超过 32 MB 限制".to_string());
+            }
+            let _ = std::fs::write(&cache, &factory);
+            Ok(factory)
+        }
+    }
+}
+
+async fn install_web_manifest(
     State(_st): State<Arc<AppState>>,
+    Query(query): Query<WebFlashQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
+    let source = query.source.unwrap_or_else(|| "local".to_string());
+    match source.as_str() {
+        "remote" => {
+            let tag = query.tag.ok_or_else(|| err("缺少版本 tag"))?;
+            if !is_version_tag(&tag) {
+                return Err(err("版本 tag 格式无效"));
+            }
+            let variant = query.variant.unwrap_or_else(|| "default".to_string());
+            let asset = web_flash_asset_name(&variant).map_err(err)?;
+            let image_path = format!(
+                "{WEB_FLASH_IMAGE_PATH}?source=remote&tag={tag}&asset={asset}&variant={variant}"
+            );
+            Ok(Json(web_flash_manifest_parts(
+                "FluidCAN",
+                &format!("{tag} / {variant}"),
+                vec![json!({"path": image_path, "offset": 0})],
+            )))
+        }
+        "local" => {
+            let token = query.token.unwrap_or_default();
+            let package = read_web_flash_package(&token).map_err(err)?;
+            let requested: Vec<String> = match query.parts.as_deref() {
+                // An explicitly empty ?parts= is an error; only a missing
+                // parameter falls back to the package defaults.
+                Some(text) => text
+                    .split(',')
+                    .map(|part| part.trim().to_string())
+                    .filter(|part| !part.is_empty())
+                    .collect(),
+                None => package.defaults.clone(),
+            };
+            if requested.is_empty() {
+                return Err(err("没有选择要烧录的分区"));
+            }
+            let mut parts = Vec::new();
+            for name in &requested {
+                let Some(part) = package.parts.iter().find(|part| &part.name == name) else {
+                    return Err(err(format!("固件包中没有分区 {name}")));
+                };
+                let image_path =
+                    format!("{WEB_FLASH_IMAGE_PATH}?source=local&token={token}&name={name}");
+                parts.push(json!({"path": image_path, "offset": part.offset}));
+            }
+            Ok(Json(web_flash_manifest_parts(
+                "FluidCAN",
+                &format!("本地固件（{}）", requested.join(", ")),
+                parts,
+            )))
+        }
+        _ => Err(err("未知的固件来源（内置固件已移除，请选择本地固件包）")),
+    }
+}
+
+async fn install_web_image(
+    State(st): State<Arc<AppState>>,
+    Query(query): Query<WebFlashQuery>,
 ) -> Result<Response, (StatusCode, Json<ApiError>)> {
-    let data = firmware_factory_bytes().map_err(err)?;
+    let source = query.source.unwrap_or_else(|| "local".to_string());
+    let data = match source.as_str() {
+        "remote" => {
+            let tag = query.tag.ok_or_else(|| err("缺少版本 tag"))?;
+            if !is_version_tag(&tag) {
+                return Err(err("版本 tag 格式无效"));
+            }
+            let asset = query.asset.ok_or_else(|| err("缺少镜像 asset"))?;
+            if !web_flash_asset_allowed(&asset) {
+                return Err(err("镜像 asset 不在允许列表中"));
+            }
+            let variant = query.variant.unwrap_or_else(|| "default".to_string());
+            web_flash_remote_factory(&st, &tag, &variant, &asset)
+                .await
+                .map_err(|e| (StatusCode::BAD_GATEWAY, Json(ApiError { error: e })))?
+        }
+        "local" => {
+            let token = query.token.unwrap_or_default();
+            let name = query.name.ok_or_else(|| err("缺少分区文件名"))?;
+            let package = read_web_flash_package(&token).map_err(err)?;
+            if !package.parts.iter().any(|part| part.name == name) {
+                return Err(err("固件包中没有该分区文件"));
+            }
+            let dir = web_flash_package_dir(&token).map_err(err)?;
+            std::fs::read(dir.join(&name))
+                .map_err(|e| err(format!("读取本地分区固件失败: {e}")))?
+        }
+        _ => return Err(err("未知的固件来源（内置固件已移除，请选择本地固件包）")),
+    };
     Ok((
-        [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
+        [(header::CONTENT_TYPE, "application/octet-stream")],
         data,
     )
         .into_response())
 }
 
-async fn installer_asset(AxPath(path): AxPath<String>) -> Response {
-    let path = if path.is_empty() { "index.html".to_string() } else { path };
-    let Some(asset) = InstallerAssets::get(&path) else {
-        return (StatusCode::NOT_FOUND, "installer asset not found").into_response();
-    };
-    let mime = mime_guess::from_path(&path).first_or_octet_stream();
-    (
-        [(axum::http::header::CONTENT_TYPE, mime.as_ref())],
-        asset.data.into_owned(),
-    )
-        .into_response()
-}
 
 async fn index() -> Html<&'static str> {
     Html(include_str!("../ui/index.html"))
@@ -1212,40 +1899,25 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/serial/send", post(serial_send))
         .route("/serial/exec", post(serial_exec))
         .route("/serial/log", get(serial_log))
-        .route("/firmware", get(firmware_info))
         .route("/install/ota", post(ota_update))
         .route("/install/flash", post(flash_serial))
+        .route("/install/flash-local", post(flash_local))
+        .route("/install/web/manifest", get(install_web_manifest))
+        .route("/install/web/image", get(install_web_image))
+        .route("/install/web/upload", post(install_web_upload))
         .route("/scan", get(scan_devices))
         .route("/updates", get(remote_releases))
-        .route("/ota/remote", post(remote_ota));
-
-    let installer_api = Router::new()
-        .route("/installer-api/releases", get(installer_releases))
-        .route(
-            "/installer-api/resources/{release}/manifest.json",
-            get(installer_manifest),
-        )
-        .route(
-            "/installer-api/resources/{release}/firmware.factory.bin",
-            get(installer_firmware),
-        );
+        .route("/ota/remote", post(remote_ota))
+        // The in-app Web Serial flasher uploads a .bin for the browser to
+        // download, so allow larger request bodies than the axum default.
+        .layer(DefaultBodyLimit::max(MAX_WEB_FLASH_BYTES + 1024 * 1024));
 
     Router::new()
         .nest("/api", api)
-        .merge(installer_api)
         .route("/", get(index))
         .route("/index.html", get(index))
         .route("/js/{*path}", get(ui_js))
         .route("/css/{*path}", get(ui_css))
-        .route(
-            "/installer",
-            get(|| async { installer_asset(AxPath("index.html".to_string())).await }),
-        )
-        .route(
-            "/installer/",
-            get(|| async { installer_asset(AxPath("index.html".to_string())).await }),
-        )
-        .route("/installer/{*path}", get(installer_asset))
         .layer(middleware::from_fn_with_state(state.clone(), web_auth))
         .layer(TraceLayer::new_for_http())
         .with_state(state)

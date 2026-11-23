@@ -1,3 +1,0 @@
-files:
-  - source: /src/assets/locales/en/translations.json
-    translation: /src/assets/locales/%locale%/%original_file_name%

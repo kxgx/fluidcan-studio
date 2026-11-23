@@ -7,6 +7,9 @@ export const state = {
   status: "",
   can: { status: "", faults: "", positions: "", drivers: "" },
   drivers: [],
+  // Parsed from config.yaml after connecting: drivers/axes/address list and the
+  // CAN address capacity.  null until a successful /config read.
+  driverLayout: null,
   lastUpdate: "",
 };
 

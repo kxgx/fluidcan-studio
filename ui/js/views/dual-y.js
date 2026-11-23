@@ -11,63 +11,87 @@ function row(label, value, cls = "") {
   return `<div class="kv"><span>${esc(label)}</span><b class="${cls}">${esc(value)}</b></div>`;
 }
 
-function motorRows(name, motor) {
-  if (!motor) return `<tr><td>${esc(name)}</td><td colspan="7" class="muted">未配置</td></tr>`;
-  const pid = motor.pid ? motor.pid.map((v) => formatNumber(v, 0)).join(" / ") : "--";
-  return `<tr>
-    <td>${esc(name)}</td>
-    <td class="mono">${esc(motor.address)}</td>
-    <td class="mono">${esc(formatNumber(motor.counts))}</td>
-    <td>${esc(formatBool(motor.invert))}</td>
-    <td>${esc(formatBool(motor.block))}</td>
-    <td class="mono">${esc(motor.sync ?? 0)}</td>
-    <td class="mono">${esc(motor.torque == null ? "--" : `${motor.torque}mA`)}</td>
-    <td class="mono">${esc(pid)}</td>
-  </tr>`;
+function detailFor(motor) {
+  if (!motor) return "--";
+  if (motor.protocol === "pd42s1") {
+    const sync = motor.sync == null ? "--" : motor.sync;
+    const block = formatBool(motor.block);
+    const torque = motor.torque == null ? "--" : `${motor.torque}mA`;
+    const pid = motor.pid ? motor.pid.map((v) => formatNumber(v, 0)).join("/") : "--";
+    return `sync=${sync} block=${block} torque=${torque} PID=${pid}`;
+  }
+  if (motor.protocol === "zdt") {
+    const cpr = motor.counts_per_rev == null ? "--" : motor.counts_per_rev;
+    return `fw=${motor.firmware || "--"} cks=${motor.checksum || "--"} cpr=${cpr}`;
+  }
+  if (motor.protocol === "canopen") {
+    return `node=${motor.node_id == null ? "--" : motor.node_id}`;
+  }
+  return "--";
+}
+
+function motorRows(axis) {
+  if (!axis || !axis.motors || !axis.motors.length) {
+    return `<tr><td>${esc(axis?.name || "--")}</td><td colspan="10" class="muted">未配置 CAN 电机</td></tr>`;
+  }
+  return axis.motors
+    .map(
+      (motor) => `<tr>
+        <td>${esc(axis.name)}</td>
+        <td>${esc(motor.role)}</td>
+        <td>${esc(motor.protocolLabel || motor.protocol || "--")}</td>
+        <td class="mono">${esc(motor.address ?? "--")}</td>
+        <td class="mono">${esc(formatNumber(axis.steps))}</td>
+        <td class="mono">${esc(formatNumber(motor.counts_per_step))}</td>
+        <td>${esc(formatBool(motor.invert))}</td>
+        <td class="mono">${esc(motor.speed_rpm ?? "--")}</td>
+        <td class="mono">${esc(motor.accel ?? "--")}</td>
+        <td class="mono">${esc(motor.update_ms ?? "--")}</td>
+        <td class="mono">${esc(detailFor(motor))}</td>
+      </tr>`,
+    )
+    .join("");
 }
 
 export function renderCanConfig(cfg) {
   const box = $("dualYBox");
-  if (!box) return cfg;
-  const y0 = cfg.y.motor0;
-  const y1 = cfg.y.motor1;
-  const warn = cfg.warnings.length
-    ? `<div class="warnbox">${cfg.warnings.map((w) => `<div>⚠ ${esc(w)}</div>`).join("")}</div>`
+  if (!box || !cfg) return cfg;
+  const can = cfg.can || {};
+  const axes = Array.isArray(cfg.axes) ? cfg.axes : [];
+  const drivers = Array.isArray(cfg.drivers) ? cfg.drivers : [];
+  const protocols = Array.isArray(cfg.protocols) ? cfg.protocols : [];
+  const warnings = Array.isArray(cfg.warnings) ? cfg.warnings : [];
+  const warn = warnings.length
+    ? `<div class="warnbox">${warnings.map((w) => `<div>⚠ ${esc(w)}</div>`).join("")}</div>`
     : '<div class="oktxt">配置检查通过</div>';
 
   box.innerHTML = `
     <div class="dual-grid">
       <div>
-        <h3>Y 轴</h3>
+        <h3>总线</h3>
         <div class="kvbox">
-          ${row("steps_per_mm", formatNumber(cfg.y.steps))}
-          ${row("Y0 地址", y0.address)}
-          ${row("Y1 地址", y1 ? y1.address : "未配置")}
-          ${row("Y0 方向反转", formatBool(y0.invert))}
-          ${row("Y1 方向反转", y1 ? formatBool(y1.invert) : "--")}
-          ${row("Y block target", `${formatBool(y0.block)} / ${y1 ? formatBool(y1.block) : "--"}`)}
-          ${row("sync_group", `${y0.sync ?? 0} / ${y1 ? y1.sync ?? 0 : "--"}`)}
+          ${row("can.driver", can.driverLabel || can.driver || "未设置")}
+          ${row("CAN 波特率", can.baud == null ? "--" : `${can.baud} bps`)}
+          ${row("TX / RX", `${can.tx || "--"} / ${can.rx || "--"}`)}
+          ${row("轴数 / 驱动数", `${axes.length} / ${drivers.length}`)}
+          ${row("协议", protocols.length ? protocols.join(" / ") : "--")}
         </div>
       </div>
       <div>
-        <h3>X / Z</h3>
+        <h3>能力提示</h3>
         <div class="kvbox">
-          ${row("X 地址", cfg.x.motor.address)}
-          ${row("X block target", formatBool(cfg.x.motor.block))}
-          ${row("Z 地址", cfg.z.motor.address)}
-          ${row("Z block target", formatBool(cfg.z.motor.block))}
-          ${row("CAN 波特率", cfg.can.baud ? `${cfg.can.baud} bps` : "--")}
+          ${row("位置回读", can.driver === "zdt" ? "36 / $CANPos" : "--")}
+          ${row("故障/使能回读", can.driver === "zdt" ? "ZDT 未实现" : "按驱动能力")}
+          ${row("驱动零位", can.driver === "zdt" ? "$CANZero (0A)" : "$CANZero")}
+          ${row("说明", "字段来自 config.yaml；只读，不修改配置")}
         </div>
       </div>
     </div>
     ${warn}
     <table style="margin-top:10px">
-      <thead><tr><th>电机</th><th>地址</th><th>counts/step</th><th>反向</th><th>block</th><th>sync</th><th>力矩</th><th>PID P/I/D</th></tr></thead>
+      <thead><tr><th>轴</th><th>电机</th><th>协议</th><th>地址</th><th>steps/mm</th><th>counts/step</th><th>反向</th><th>速度 RPM</th><th>加速度</th><th>更新 ms</th><th>协议字段</th></tr></thead>
       <tbody>
-        ${motorRows("Y0", y0)}
-        ${motorRows("Y1", y1)}
-        ${motorRows("X", cfg.x.motor)}
-        ${motorRows("Z", cfg.z.motor)}
+        ${axes.map((axis) => motorRows(axis)).join("")}
       </tbody>
     </table>`;
   return cfg;

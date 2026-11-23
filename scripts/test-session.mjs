@@ -5,16 +5,16 @@ import { resolveConnectTarget, scanMessage, scannedAddress } from "../ui/js/core
 assert.equal(resolveConnectTarget("", ""), null);
 assert.equal(resolveConnectTarget("   ", ""), null);
 assert.equal(resolveConnectTarget(undefined, null), null);
-assert.deepEqual(resolveConnectTarget(" http://192.168.2.83 ", ""), {
-  url: "http://192.168.2.83",
+assert.deepEqual(resolveConnectTarget(" http://192.0.2.10 ", ""), {
+  url: "http://192.0.2.10",
   source: "input",
 });
-assert.deepEqual(resolveConnectTarget("", " http://192.168.2.84 "), {
-  url: "http://192.168.2.84",
+assert.deepEqual(resolveConnectTarget("", " http://192.0.2.11 "), {
+  url: "http://192.0.2.11",
   source: "scan",
 });
-assert.deepEqual(resolveConnectTarget("http://192.168.2.83", "http://192.168.2.84"), {
-  url: "http://192.168.2.83",
+assert.deepEqual(resolveConnectTarget("http://192.0.2.10", "http://192.0.2.11"), {
+  url: "http://192.0.2.10",
   source: "input",
 });
 
@@ -24,8 +24,8 @@ assert.equal(scanMessage(null), "未发现设备");
 assert.equal(scanMessage([{}]), "发现 1 台");
 assert.equal(scanMessage([{}, {}]), "发现 2 台");
 assert.equal(scannedAddress([]), "");
-assert.equal(scannedAddress([{ url: " http://192.168.2.83 " }]), "http://192.168.2.83");
-assert.equal(scannedAddress([{ url: "http://192.168.2.83" }, { url: "http://192.168.2.84" }]), "");
+assert.equal(scannedAddress([{ url: " http://192.0.2.10 " }]), "http://192.0.2.10");
+assert.equal(scannedAddress([{ url: "http://192.0.2.10" }, { url: "http://192.0.2.11" }]), "");
 assert.equal(scannedAddress([{}]), "");
 
 console.log("session flow tests: PASS");

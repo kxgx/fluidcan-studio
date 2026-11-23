@@ -61,12 +61,8 @@ jobs:
       - name: 2. 检查内置资源完整
         run: |
           test -f ui/index.html
-          test -f installer-dist/index.html
-          test -f firmware/firmware.bin
-          test -f firmware/firmware.factory.bin
-          test -f firmware/bootloader.bin
-          test -f firmware/partitions.bin
-          echo "OK: embedded ui/installer/firmware present"
+          test -f ui/js/vendor/esp-web-tools.js
+          echo "OK: embedded ui/vendor present (firmware is user-supplied)"
 
       - name: 3. 检查源码未写死开发机路径
         run: |
@@ -484,7 +480,7 @@ jobs:
             - macOS x64 / ARM64: dmg
             - Android ARM64: APK
 
-            内置网页 UI、fluid-installer 和固件，单文件运行。
+            内置网页 UI（含 Web Serial 烧录组件），单文件运行；固件由用户本地提供。
           files: |
             release-assets/**/*
             SHA256SUMS.txt

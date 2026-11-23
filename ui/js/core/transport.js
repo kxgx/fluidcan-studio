@@ -95,17 +95,32 @@ export async function getStatus() {
 }
 
 // Uniform CAN snapshot for the overview and CAN view.
-export async function getCan() {
+// `light` skips $CANDriverInfo for the fast overview refresh; the raw CAN
+// view still requests the full snapshot.
+export async function getCan(light = false) {
   if (mode === "serial") {
-    return {
-      base: "serial:" + serialName,
-      status: await exec("$CANStatus"),
-      faults: await exec("$CANFaults"),
-      positions: await exec("$CANPos"),
-      drivers: await exec("$CANDriverInfo"),
-    };
+    const fields = ["status", "faults", "positions"];
+    if (!light) fields.push("drivers");
+    const commands = { status: "$CANStatus", faults: "$CANFaults", positions: "$CANPos", drivers: "$CANDriverInfo" };
+    const out = { base: "serial:" + serialName };
+    for (const field of fields) out[field] = await exec(commands[field]);
+    return out;
   }
-  return api("/can");
+  return api("/can" + (light ? "?light=1" : ""));
+}
+
+// Device configuration (config.yaml).  WiFi reads /api/config; the serial link
+// uses FluidNC's $CD (Config/Dump) report command, which prints the YAML on the
+// console channel.
+export async function getDeviceConfig() {
+  if (mode === "serial") {
+    const text = await exec("$CD");
+    if (!text || !/(^|\n)\s*axes\s*:/i.test(text)) {
+      throw new Error("串口返回的配置内容无效（$CD 没有输出 YAML）");
+    }
+    return { yaml: text, base: "serial:" + serialName };
+  }
+  return api("/config");
 }
 
 // Serial log is exposed by the native backend.
