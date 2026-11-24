@@ -11,3 +11,8 @@ gen/android/app/release/
 # Build/release artifacts are produced by CI or a local cargo build, not committed.
 /fluidcan-studio.exe
 /dist/
+
+# Android signing material
+*.keystore
+*.jks
+*.keystore.b64

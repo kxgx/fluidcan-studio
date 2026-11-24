@@ -22,7 +22,7 @@ function detailFor(motor) {
   }
   if (motor.protocol === "zdt") {
     const cpr = motor.counts_per_rev == null ? "--" : motor.counts_per_rev;
-    return `fw=${motor.firmware || "--"} cks=${motor.checksum || "--"} cpr=${cpr}`;
+    return `fw=${motor.firmware || "--"} cks=${motor.checksum || "--"} cpr=${cpr} mode=${motor.mode || "position_stream"} speed=${motor.speed_source || "fixed"}`;
   }
   if (motor.protocol === "canopen") {
     return `node=${motor.node_id == null ? "--" : motor.node_id}`;

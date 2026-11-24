@@ -107,6 +107,39 @@
       <div class="row"><label>任意命令</label><input id="quickCmd" style="flex:1" placeholder="$J=G91X1F500、$H、$X ..."><button onclick="sendQuick()">发送</button></div>
     </div>
     <div class="card">
+      <h3>方向键 / 手柄</h3>
+      <div class="sub">虚拟 D-pad、键盘方向键、物理手柄或虚拟摇杆；默认关闭，每次方向输入只发送一个步距的 $J 点动；不会自动重复产生新命令、回零或使能，已接受的点动会按控制器队列执行完。</div>
+      <div class="row">
+        <label><input type="checkbox" id="dpadEnable"> 启用方向控制</label>
+        <label>平面
+          <select id="dpadPlane">
+            <option value="XY">XY</option>
+            <option value="XZ">XZ</option>
+            <option value="YZ">YZ</option>
+          </select>
+        </label>
+        <label><input type="checkbox" id="dpadWasd"> WASD</label>
+        <span id="dpadStatus" class="pill warn2">方向键未启用</span>
+      </div>
+      <fieldset id="dpadFieldset" class="dpad-fieldset" disabled>
+        <div class="dpad-layout">
+          <div id="dpadPad" class="dpad" aria-label="虚拟方向键">
+            <button type="button" class="dpad-btn up" data-dir="up">▲</button>
+            <button type="button" class="dpad-btn left" data-dir="left">◀</button>
+            <span class="dpad-center">●</span>
+            <button type="button" class="dpad-btn right" data-dir="right">▶</button>
+            <button type="button" class="dpad-btn down" data-dir="down">▼</button>
+          </div>
+          <div class="stick-wrap">
+            <div id="virtualStick" class="virtual-stick" aria-label="虚拟手柄摇杆"><div id="stickKnob" class="stick-knob"></div></div>
+            <span class="sub" style="margin:0">虚拟手柄</span>
+          </div>
+        </div>
+      </fieldset>
+      <div id="gamepadStatus" class="sub">手柄：未连接</div>
+      <div class="sub">键盘方向键/WASD：按当前平面移动。物理手柄使用标准 D-pad 或左摇杆。每次输入只发送一个步距；已接受的点动会按控制器队列执行完，步距/进给沿用上方点动参数。</div>
+    </div>
+    <div class="card">
       <h3>限位开关测试（只读）</h3>
       <div class="sub">轮询 FluidNC 实时状态里的 Pn 触发位；不会自动移动电机或修改配置。手动按动各轴限位开关，观察“触发/释放”和下方日志。</div>
       <div class="row">

@@ -25,3 +25,20 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
 .warnbox{margin-top:10px;padding:8px 10px;border:1px solid #65502a;background:#221a0d;color:var(--warn);border-radius:8px;font-size:12px}
 .dual-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
 .dual-grid h3{margin:0 0 6px}
+
+/* Direction pad / gamepad */
+.dpad-fieldset{border:1px dashed #2b4054;border-radius:10px;padding:10px;margin:10px 0 4px;min-width:0}
+.dpad-fieldset:disabled{opacity:.45}
+.dpad-layout{display:flex;flex-wrap:wrap;gap:24px;align-items:center;justify-content:center}
+.dpad{position:relative;width:150px;height:150px;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);gap:4px}
+.dpad-btn{border:1px solid #2b4054;background:#152131;color:var(--txt);border-radius:10px;font-size:18px;line-height:1;padding:0;min-width:0;min-height:0}
+.dpad-btn:hover{border-color:var(--acc);color:#fff}
+.dpad-btn.up{grid-column:2;grid-row:1}.dpad-btn.left{grid-column:1;grid-row:2}.dpad-btn.right{grid-column:3;grid-row:2}.dpad-btn.down{grid-column:2;grid-row:3}
+.dpad-center{grid-column:2;grid-row:2;display:flex;align-items:center;justify-content:center;color:var(--acc);font-size:12px;border:1px solid #2b4054;border-radius:10px;background:#0d1721}
+.stick-wrap{display:flex;flex-direction:column;align-items:center;gap:6px}
+.virtual-stick{width:130px;height:130px;border-radius:50%;border:1px solid #2b4054;background:radial-gradient(circle at 50% 50%,#172637 0,#0c141d 72%);position:relative;touch-action:none;user-select:none;cursor:pointer}
+.virtual-stick:active{border-color:var(--acc2)}
+.stick-knob{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;border-radius:50%;border:1px solid #4aa8ff;background:linear-gradient(145deg,#2b9cff,#1b5d92);box-shadow:0 4px 16px #0008;transition:transform .06s linear;pointer-events:none}
+@media(max-width:600px){.dpad{width:132px;height:132px}.virtual-stick{width:112px;height:112px}.stick-knob{width:40px;height:40px;margin:-20px 0 0 -20px}}
+
+.dpad,.dpad-btn{touch-action:none}

@@ -6,7 +6,7 @@ Rust + Tauri 的 FluidNC CAN 调试、控制、配置与固件安装工具，面
 
 ![桌面 GUI](docs/gui.png)
 
-当前版本：`studio-v0.4.2`
+当前版本：`studio-v0.4.3`
 
 ## 功能
 
@@ -17,6 +17,7 @@ Rust + Tauri 的 FluidNC CAN 调试、控制、配置与固件安装工具，面
 - CAN：`$CANStatus`、`$CANFaults`、`$CANPos`、`$CANDriverInfo`、`$CANScan`、`$CANAutoConfig`、`$CANReset`、`$CANLog`
 - CAN 配置面板：只读解析 config.yaml，按 can.driver 和每轴 motorN 的 pd42s1/zdt/canopen 块显示地址、协议字段、方向、速度/加速度/更新周期；警告协议混用、地址重复和方向不一致
 - 运动控制：点动、回零、解锁、使能/失能、工作坐标清零（G10 L20 P1）和驱动零位（$CANZero，按驱动协议清位置基准后自动坐标零）、任意命令；轴列表和 $CANZero 地址由 config.yaml 生成
+- **方向键 / 手柄控制**：默认关闭的虚拟 D-pad、键盘方向键（可选 WASD）、标准 Gamepad API 物理手柄和虚拟摇杆；统一发送一次性 `$J` 点动，支持 XY/XZ/YZ 平面、手柄 D-pad/左摇杆和死区；每次方向输入只发送一个步距，不重复排队
 - **限位开关测试（只读）**：轮询 `?` 状态中的 `Pn:` 触发位，配合 config.yaml 里的 limit_all/neg/pos 引脚显示各轴触发/释放，不会自动移动电机
 - 配置：读取/编辑/上传 `config.yaml`，上传前 YAML 语法检查
 - 远程仓库 OTA：从 GitHub Releases 读取 `can-vX.Y.Z`，`can-v0.2.16+` 自动下载结构化 zip 并提取 `OTA/firmware.bin` 上传；旧版本回退 `firmware.bin`/`{variant}-firmware.bin`；GitHub API 限流时回退 `releases.atom`
@@ -130,7 +131,7 @@ npm install
 - Windows 中文路径下 NDK 链接失败（复制到 ASCII 工作目录构建）
 - Java / Android SDK / NDK 环境
 - ARM64 APK 构建
-- 测试签名
+- 本地测试签名（CI Release 使用固定 release key）
 - 16 KB 页对齐检查
 
 产物：
@@ -160,8 +161,8 @@ dist/FluidCAN-Studio-android-arm64.apk
 触发：
 
 ```powershell
-git tag studio-v0.2.1
-git push origin studio-v0.2.1
+git tag studio-v0.4.3
+git push origin studio-v0.4.3
 ```
 
 依赖的 Actions 使用当前最新大版本，包括：
@@ -176,6 +177,43 @@ git push origin studio-v0.2.1
 
 Linux GUI 依赖 WebKitGTK/GTK，因此发布为 deb/rpm/AppImage，不是完全静态二进制；无桌面的 headless Web 模式仍由同一二进制运行。
 
+## Android 固定签名
+
+Android 更新必须使用同一个签名密钥和同一个 `applicationId`（`com.fluidcan.studio`）。CI 不再每次生成临时调试密钥，改为读取仓库 Secrets：
+
+```text
+ANDROID_KEYSTORE_BASE64      # keystore 文件 base64
+ANDROID_KEYSTORE_PASSWORD    # store 密码
+ANDROID_KEY_ALIAS            # key alias
+ANDROID_KEY_PASSWORD         # key 密码
+```
+
+一次性生成固定 release keystore（不要提交到仓库）：
+
+```bash
+keytool -genkeypair -v \
+  -keystore android-release.keystore \
+  -alias fluidcan \
+  -keyalg RSA -keysize 4096 -validity 10000 \
+  -storetype PKCS12
+```
+
+生成 base64（Linux/macOS）：
+
+```bash
+base64 -w0 android-release.keystore > android-release.keystore.b64
+```
+
+Windows PowerShell：
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("android-release.keystore")) |
+  Set-Content -NoNewline android-release.keystore.b64
+```
+
+把 base64 内容和另外三个密码/alias 写入 GitHub 仓库 Settings → Secrets and variables → Actions。不要把 keystore 或密码提交到仓库。
+
+首次从旧的临时签名 APK 升级到固定签名 APK 仍需卸载一次；之后只要 `applicationId` 不变且签名 Secret 不变，就可以直接覆盖安装，不需要卸载。CI 的 Android `versionCode` 由 release tag 自动递增（`100000 + major*10000 + minor*100 + patch`）。
 ## Android / Xiaomi HyperOS
 
 Android 是独立构建版本，复用同一套 Rust 后端、网页 UI 和内置资源。
@@ -202,7 +240,7 @@ Android 是独立构建版本，复用同一套 Rust 后端、网页 UI 和内�
 
 说明：
 
-- 当前 APK 使用测试签名；正式上架需要配置自己的 keystore。
+- CI Release APK 使用 Secrets 中的固定 release key；本地 build-android.ps1 仍使用测试签名；正式上架需要配置自己的 keystore。
 - Android 主要使用 Wi-Fi 连接控制器、CAN、运动、配置和 OTA。
 - Web Serial 和 USB 串口烧录不作为 Android 主路径。
 - 小米澎湃OS 文档：
@@ -291,6 +329,17 @@ GET /api/scan
 | `FLUIDCAN_WEB_TOKEN` | 自动生成 | Web 访问 token |
 | `FLUIDCAN_PYTHON` | `python` | esptool 调用的 Python |
 | `GITHUB_TOKEN` | 空 | 可选，提高 GitHub API 限额 |
+
+## 方向键 / 手柄控制
+
+运动控制页的方向控制默认关闭，勾选“启用方向控制”后才生效；设备未连接时只显示等待，不会发送命令。
+
+- 虚拟 D-pad：屏幕方向按钮，每次按下发送一个步距的点动。
+- 键盘：方向键；可选 WASD。输入框/文本域/下拉框获得焦点时不拦截。
+- 物理手柄：标准 Gamepad API（仅 standard mapping），支持 D-pad 按钮和左摇杆，带死区。
+- 虚拟手柄：屏幕摇杆，拖动产生方向，每次方向变化发送一个步距。
+- 平面：XY / XZ / YZ；步距和进给沿用运动控制页的点动参数。
+- 所有来源统一发送 `$J=G21G91...` 一次性点动；不会自动重复产生新命令、回零或使能。每次方向输入只发一个步距，已接受的 jog 会按控制器队列执行完；默认关闭且在未连接时不发送。
 
 ## 限位开关测试（只读）
 

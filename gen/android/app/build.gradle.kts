@@ -21,8 +21,12 @@ android {
         applicationId = "com.fluidcan.studio"
         minSdk = 24
         targetSdk = 37
-        versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
-        versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+        // CI release builds set these so the Android package version advances
+        // with every tag even if the generated tauri.properties is stale.
+        versionCode = System.getenv("ANDROID_VERSION_CODE")?.toIntOrNull()
+            ?: tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
+        versionName = System.getenv("ANDROID_VERSION_NAME")
+            ?: tauriProperties.getProperty("tauri.android.versionName", "1.0")
     }
     packaging {
         jniLibs {

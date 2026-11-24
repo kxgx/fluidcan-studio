@@ -74,6 +74,9 @@ function motorSummary(motor, fallbackAddress = null) {
       speed_rpm: null,
       accel: null,
       update_ms: null,
+      mode: null,
+      position_mode: null,
+      speed_source: null,
     };
   }
   const p = entry.config || {};
@@ -99,6 +102,9 @@ function motorSummary(motor, fallbackAddress = null) {
     speed_rpm: p.speed_rpm ?? null,
     accel: p.accel ?? null,
     update_ms: p.update_ms ?? null,
+    mode: p.mode ?? null,
+    position_mode: p.position_mode ?? null,
+    speed_source: p.speed_source ?? null,
   };
 }
 

@@ -10,6 +10,7 @@ import { resolveConnectTarget, scanMessage, scannedAddress } from "./core/sessio
 import { parseConfigMap } from "./core/yconfig.js";
 import { parseDriverLayout } from "./core/drivers.js";
 import { readLimitsOnce, stopLimitTest, toggleLimitTest } from "./views/limits.js";
+import { initDirectionControls } from "./views/dpad.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -406,6 +407,7 @@ async function run(kind, fn) {
 }
 
 async function boot() {
+  initDirectionControls();
   $("clock").textContent = new Date().toLocaleString();
   setInterval(() => {
     $("clock").textContent = new Date().toLocaleString();

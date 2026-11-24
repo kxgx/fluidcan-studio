@@ -85,12 +85,18 @@ axes:
         speed_rpm: 20
         accel: 50
         update_ms: 20
+        mode: position_stream
+        position_mode: relative_previous
+        speed_source: fixed
 `);
 assert.equal(zdt.can.driverLabel, "ZDT");
 assert.equal(zdt.drivers[0].protocol, "zdt");
 assert.equal(zdt.x.motor0.firmware, "Emm");
 assert.equal(zdt.x.motor0.checksum, "6B");
 assert.equal(zdt.x.motor0.counts_per_rev, 3200);
+assert.equal(zdt.x.motor0.mode, "position_stream");
+assert.equal(zdt.x.motor0.position_mode, "relative_previous");
+assert.equal(zdt.x.motor0.speed_source, "fixed");
 assert.equal(zdt.x.motor0.sync, null);
 assert.deepEqual(zdt.warnings, []);
 

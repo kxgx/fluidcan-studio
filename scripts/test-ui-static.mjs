@@ -13,7 +13,7 @@ const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]);
 for (const id of ids) {
   assert.equal(ids.filter((x) => x === id).length, 1, `duplicate id ${id}`);
 }
-for (const id of ["dualYBox", "dualYMsg", "driverTable", "view-can"]) {
+for (const id of ["dualYBox", "dualYMsg", "driverTable", "view-can", "dpadEnable", "dpadPlane", "dpadWasd", "dpadFieldset", "dpadPad", "virtualStick", "stickKnob", "dpadStatus", "gamepadStatus"]) {
   assert.ok(ids.includes(id), `missing id ${id}`);
 }
 
@@ -170,6 +170,14 @@ assert.ok(canView.includes("CAN_ADDRESS_LIMIT"), "CAN view must show the CAN add
 assert.ok(connectBody.includes("loadDriverLayout"), "connectDevice must load the config.yaml driver layout");
 assert.ok(serialBody.includes("loadDriverLayout"), "openSerial must load the config.yaml driver layout");
 assert.ok(app.includes("parseDriverLayout") && app.includes("loadDriverLayout"), "app must parse the driver layout from config.yaml");
+assert.ok(app.includes("initDirectionControls"), "direction controls must be initialized");
+const dpadView = fs.readFileSync(path.join(root, "ui/js/views/dpad.js"), "utf8");
+assert.ok(
+  dpadView.includes("keyboardDirection") && (dpadView.includes("gamepadDirection") || (dpadView.includes("gamepadButtonDirection") && dpadView.includes("gamepadStickDirection"))) && dpadView.includes("stickDirection"),
+  "direction input sources missing",
+);
+assert.ok(dpadView.includes("$J") || dpadView.includes("directionToJog"), "direction controls must use one-shot jog commands");
+assert.ok(html.includes('id="dpadFieldset" class="dpad-fieldset" disabled'), "direction controls must start disabled");
 assert.ok(app.includes("config.yaml：解析到"), "driver layout load must be logged");
 assert.ok(app.includes("applyAxisOptions"), "jog axis options must come from config.yaml");
 assert.ok(!html.includes("地址2/3"), "motion view must not hard-code Y driver addresses");
