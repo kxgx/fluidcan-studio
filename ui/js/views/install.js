@@ -1,24 +1,49 @@
-import { httpGet, httpPost } from "../core/transport.js";
-import { state } from "../core/store.js";
+import { getStatus, httpGet, httpPost } from "../core/transport.js";
+import { firmwareVariant, isFourMbHardware, parseFirmwareHardware } from "../core/firmware.js";
+import { patch, state } from "../core/store.js";
 
 const $ = (id) => document.getElementById(id);
 let releasesLoaded = false;
-const FOUR_MB = new Set([
-  "nopsram-oled-usb-4mb",
-  "quad-oled-usb-4mb",
-  "octal-oled-usb-4mb",
-]);
 
-function variant() {
-  return $("firmwareVariant")?.value || "";
+function hardwareInfo() {
+  return parseFirmwareHardware(state.build);
+}
+
+function detectedHardware() {
+  return hardwareInfo()?.hw || "";
+}
+
+function detectedRadio() {
+  return hardwareInfo()?.radio || "";
+}
+
+function selectedRadio() {
+  return $("firmwareVariant")?.value || detectedRadio() || "wifi";
+}
+
+function legacyNeedsConfirm() {
+  return Boolean(hardwareInfo()?.legacy);
+}
+
+function legacyConfirmed() {
+  return !legacyNeedsConfirm() || Boolean($("legacyConfirm")?.checked);
 }
 
 function hasVariant() {
-  return variant() !== "";
+  return Boolean(releaseVariant()) && legacyConfirmed();
+}
+
+function releaseVariant() {
+  const hw = detectedHardware();
+  return hw ? firmwareVariant(selectedRadio(), hw) : "";
 }
 
 function isFourMb() {
-  return FOUR_MB.has(variant());
+  return isFourMbHardware(detectedHardware());
+}
+
+function isNoWifi() {
+  return selectedRadio() === "nowifi";
 }
 
 function currentTag() {
@@ -26,29 +51,65 @@ function currentTag() {
   return m ? m[1].replace(/-dirty$/, "") : "";
 }
 
+function hardwareLabel() {
+  const info = hardwareInfo();
+  if (!info) return "未识别";
+  return `${info.radio === "nowifi" ? "NoWiFi" : "WiFi"} · ${info.hw}`;
+}
+
+function selectDetectedRadio() {
+  const radio = detectedRadio();
+  const select = $("firmwareVariant");
+  if (radio && select) select.value = radio;
+  const web = $("webFlashVariant");
+  if (radio && web) web.value = radio;
+}
+
+async function ensureBuild() {
+  if (detectedHardware() || !state.connected) return;
+  try {
+    const s = await getStatus();
+    if (s && typeof s.build === "string" && s.build) {
+      patch({ build: s.build, status: s.state || state.status });
+    }
+  } catch {
+    /* not connected; the UI will ask the user to connect */
+  }
+}
+
 export function updateVariantState() {
   const button = $("remoteOtaBtn");
   const warn = $("variantWarn");
   const variantSelect = $("firmwareVariant");
   const releaseSelect = $("remoteRelease");
+  const hw = detectedHardware();
+  const legacy = legacyNeedsConfirm();
+  const legacyWrap = $("legacyConfirmWrap");
+  if (legacyWrap) legacyWrap.style.display = legacy ? "" : "none";
+  const noWifi = isNoWifi();
   const four = isFourMb();
   if (variantSelect) variantSelect.disabled = !releasesLoaded;
   if (releaseSelect) releaseSelect.disabled = !releasesLoaded;
-  if (button) button.disabled = !releasesLoaded || !hasVariant() || four;
-  if (warn) {
-    if (!releasesLoaded) {
-      warn.textContent = "请先获取版本列表，再选择固件分类。";
-      warn.className = "sub";
-    } else if (!hasVariant()) {
-      warn.textContent = "请选择固件分类后再进行 OTA。";
-      warn.className = "sub warntxt";
-    } else if (four) {
-      warn.textContent = "当前选择为 4 MB 版本：没有 OTA 备用分区，不能网络 OTA，请使用串口烧录。";
-      warn.className = "sub badtxt";
-    } else {
-      warn.textContent = "当前选择为 8 MB 版本：支持网络 OTA（0.2.16+ 自动下载 Release 结构化 zip 并提取 OTA/firmware.bin）。";
-      warn.className = "sub";
-    }
+  if (button) button.disabled = !releasesLoaded || !hasVariant() || four || noWifi;
+  if (!warn) return;
+  if (!releasesLoaded) {
+    warn.textContent = "请先获取版本列表；连接设备后会自动识别硬件。";
+    warn.className = "sub";
+  } else if (legacyNeedsConfirm() && !legacyConfirmed()) {
+    warn.textContent = "旧固件未报告 Flash/PSRAM：请确认硬件是 N16R8 / 16MB Octal；若是 4MB/8MB 板，请先用本地 USB 包刷入带硬件标记的 can-v0.2.26。";
+    warn.className = "sub warntxt";
+  } else if (!hw) {
+    warn.textContent = "未识别硬件：请先连接设备并刷新版本，USB 烧录可直接选择固件。";
+    warn.className = "sub warntxt";
+  } else if (noWifi) {
+    warn.textContent = `已识别 ${hardwareLabel()}：NoWiFi 固件没有网络栈，不能网络 OTA，请用 USB / Web Serial 烧录。`;
+    warn.className = "sub badtxt";
+  } else if (four) {
+    warn.textContent = `已识别 ${hardwareLabel()}：4 MB 单 app 分区，不能网络 OTA，请用 USB / Web Serial 烧录。`;
+    warn.className = "sub badtxt";
+  } else {
+    warn.textContent = `已识别 ${hardwareLabel()}：自动选择 ${releaseVariant()}，支持网络 OTA。`;
+    warn.className = "sub";
   }
 }
 
@@ -78,13 +139,17 @@ function syncVariantOptions() {
   const source = $("firmwareVariant");
   const target = $("webFlashVariant");
   if (!source || !target) return;
-  const previous = target.value;
-  target.innerHTML = source.innerHTML;
-  if (previous) target.value = previous;
+  target.value = source.value;
 }
 
 export async function refreshRemote() {
-  $("remoteMsg").textContent = "读取 GitHub...";
+  $("remoteMsg").textContent = "读取设备与 GitHub...";
+  await ensureBuild();
+  selectDetectedRadio();
+  if (legacyNeedsConfirm()) {
+    const confirm = $("legacyConfirm");
+    if (confirm) confirm.checked = false;
+  }
   const j = await httpGet("/updates");
   const releases = j.releases || [];
   const installed = currentTag();
@@ -100,7 +165,7 @@ export async function refreshRemote() {
   releasesLoaded = releases.length > 0;
   $("remoteMsg").textContent = releasesLoaded ? `${releases.length} 个版本` : "没有可用版本";
   $("remoteOut").textContent = JSON.stringify(
-    { current: installed, variant: variant(), releases },
+    { current: installed, hardware: hardwareLabel(), variant: releaseVariant(), releases },
     null,
     2,
   );
@@ -111,12 +176,14 @@ export async function refreshRemote() {
 
 export async function remoteOta() {
   if (!releasesLoaded) throw new Error("先获取版本列表");
-  if (!hasVariant()) throw new Error("先选择固件分类");
+  if (!hasVariant()) throw new Error("未识别硬件，请先连接设备");
+  if (isNoWifi()) throw new Error("NoWiFi 固件没有网络栈，不能网络 OTA；请用 USB / Web Serial 烧录");
   if (isFourMb()) throw new Error("4 MB 版本不能网络 OTA，请使用串口或 Web Serial 烧录 factory 镜像");
   const tag = $("remoteRelease").value;
   if (!tag) throw new Error("先获取并选择版本");
-  $("remoteMsg").textContent = "下载 Release zip 并提取 OTA/firmware.bin...";
-  const j = await httpPost("/ota/remote", { tag, variant: variant() });
+  const variant = releaseVariant();
+  $("remoteMsg").textContent = `自动选择 ${variant}，下载 Release zip...`;
+  const j = await httpPost("/ota/remote", { tag, variant });
   $("remoteOut").textContent = JSON.stringify(j, null, 2);
   $("remoteMsg").textContent = j && j.ota && j.ota.http === 200 ? "OTA 已提交" : "OTA 已提交（检查响应）";
   return j;
@@ -199,16 +266,18 @@ export async function loadToolchain() {
 // the basic fluid-installer flow, now part of Studio itself.
 
 const WEB_FLASH_VARIANTS = new Set([
-  "nopsram-oled-usb-4mb",
-  "quad-oled-usb-4mb",
-  "octal-oled-usb-4mb",
-  "quad-oled-usb",
-  "octal-oled-usb",
-  "quad-oled",
-  "octal-oled",
-  "quad",
-  "octal",
-  "default",
+  "wifi-8mb-quad",
+  "wifi-8mb-octal",
+  "wifi-16mb-octal",
+  "wifi-4mb-quad",
+  "wifi-4mb-octal",
+  "wifi-4mb-nopsram",
+  "nowifi-8mb-quad",
+  "nowifi-8mb-octal",
+  "nowifi-16mb-octal",
+  "nowifi-4mb-quad",
+  "nowifi-4mb-octal",
+  "nowifi-4mb-nopsram",
 ]);
 
 let webFlashUpload = null;
@@ -233,6 +302,14 @@ async function fetchJson(path, options) {
   }
   if (!response.ok) throw new Error(value.error || `HTTP ${response.status}`);
   return value;
+}
+
+function resetWebFlashManifest() {
+  const button = $("webFlashButton");
+  if (!button) return;
+  button.removeAttribute("manifest");
+  if ("manifest" in button) button.manifest = undefined;
+  button.style.display = "none";
 }
 
 function resetWebFlashUpload() {
@@ -286,7 +363,10 @@ export function updateWebFlashState() {
   const hint = $("webFlashHint");
   const button = $("webFlashButton");
   const parts = $("webFlashParts");
+  const prepare = $("webFlashPrepareBtn");
   const local = source === "local";
+  const legacyBlocked = !local && legacyNeedsConfirm() && !legacyConfirmed();
+  if (prepare) prepare.disabled = legacyBlocked;
   if (release) release.disabled = !local ? !releasesLoaded : true;
   if (variantSelect) variantSelect.disabled = !local ? !releasesLoaded : true;
   if (file) file.disabled = !local;
@@ -302,8 +382,13 @@ export function updateWebFlashState() {
   }
   hint.className = "sub";
   if (source === "remote") {
+    if (legacyBlocked) {
+      hint.className = "sub badtxt";
+      hint.textContent = "旧固件没有硬件标识：请先在远程 OTA 卡勾选“按 N16R8 / 16MB Octal 继续”；4MB/8MB 板请先用本地 USB 包刷入新固件。";
+      return;
+    }
     hint.textContent =
-      "远程来源会自动下载 can-v0.2.16+ 的结构化 Release zip，并提取 USB/firmware.factory.bin；旧版本回退到直接 factory 资源。仅 8 MB 分类支持网络 OTA，4 MB 分类请用 USB/Web Serial。首次烧录需从 GitHub 下载，网络慢时可能较久。";
+      `远程来源自动选择 ${releaseVariant() || "（未识别硬件）"} 的 Release zip，并提取 USB/firmware.factory.bin；硬件来自设备 $I，USB 和 OLED 固定包含。`;
   } else {
     hint.textContent =
       "选择本地固件包（.zip 或单个 .bin）。标准文件名：firmware.factory.bin/factory.bin→0x0（整片）、bootloader.bin→0x0、partitions.bin→0x8000、boot_app0.bin→0xE000、firmware.bin/app.bin→0x10000。上传后可只勾选需要更新的分区（例如只更新 firmware.bin）。";
@@ -341,12 +426,15 @@ export async function prepareWebFlash() {
     let upload = null;
     if (source === "remote") {
       if (!releasesLoaded) await refreshRemote();
+      if (legacyNeedsConfirm() && !legacyConfirmed()) {
+        throw new Error("旧固件硬件未确认：请在远程 OTA 卡勾选按 N16R8 / 16MB Octal 继续；4MB/8MB 板请先本地 USB 刷入新固件");
+      }
       const tag = $("webFlashRelease").value;
-      const selectedVariant = $("webFlashVariant").value;
+      const selectedVariant = releaseVariant();
       if (!tag) throw new Error("先获取并选择版本");
-      if (!selectedVariant) throw new Error("先选择固件分类");
+      if (!selectedVariant) throw new Error("未识别硬件，请先连接设备");
       if (!WEB_FLASH_VARIANTS.has(selectedVariant)) {
-        throw new Error("该分类没有 factory 镜像，Web Serial 不支持；请改用网络 OTA 或选择 4 MB 分类");
+        throw new Error("当前硬件/选项没有 factory 镜像，Web Serial 不支持");
       }
       manifestUrl =
         "/api/install/web/manifest?source=remote&tag=" +
@@ -402,12 +490,36 @@ function esc(value) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  $("firmwareVariant")?.addEventListener("change", updateVariantState);
+  $("legacyConfirm")?.addEventListener("change", () => {
+    resetWebFlashManifest();
+    updateVariantState();
+    updateWebFlashState();
+  });
+  $("firmwareVariant")?.addEventListener("change", () => {
+    resetWebFlashManifest();
+    updateVariantState();
+    syncVariantOptions();
+    updateWebFlashState();
+  });
+  $("webFlashVariant")?.addEventListener("change", () => {
+    const remote = $("firmwareVariant");
+    const web = $("webFlashVariant");
+    if (remote && web) remote.value = web.value;
+    resetWebFlashManifest();
+    updateVariantState();
+    updateWebFlashState();
+  });
+  $("webFlashRelease")?.addEventListener("change", () => {
+    resetWebFlashManifest();
+    updateWebFlashState();
+  });
   $("webFlashSource")?.addEventListener("change", () => {
+    resetWebFlashManifest();
     updateWebFlashState();
   });
   $("webFlashFile")?.addEventListener("change", () => {
     resetWebFlashUpload();
+    resetWebFlashManifest();
     updateWebFlashState();
   });
   syncVariantOptions();

@@ -57,15 +57,18 @@ const MAX_WEB_FLASH_BYTES: usize = 32 * 1024 * 1024;
 // Variants that ship a factory image (0.2.16+ release zips contain
 // USB/firmware.factory.bin for every variant; older releases only for some).
 const WEB_FLASH_VARIANTS: &[&str] = &[
-    "nopsram-oled-usb-4mb",
-    "quad-oled-usb-4mb",
-    "octal-oled-usb-4mb",
-    "quad-oled-usb",
-    "octal-oled-usb",
-    "quad-oled",
-    "octal-oled",
-    "quad",
-    "octal",
+    "wifi-8mb-quad",
+    "wifi-8mb-octal",
+    "wifi-16mb-octal",
+    "wifi-4mb-quad",
+    "wifi-4mb-octal",
+    "wifi-4mb-nopsram",
+    "nowifi-8mb-quad",
+    "nowifi-8mb-octal",
+    "nowifi-16mb-octal",
+    "nowifi-4mb-quad",
+    "nowifi-4mb-octal",
+    "nowifi-4mb-nopsram",
 ];
 
 /// Query for the browser-facing Web Serial manifest/image endpoints.
@@ -626,8 +629,8 @@ fn extract_usb_factory(data: &[u8]) -> Result<Option<(String, Vec<u8>)>, String>
 fn release_zip_variant(variant: &str) -> String {
     let variant = variant.trim();
     if variant.is_empty() || variant == "default" {
-        // The default env (wifi_s3_oled) is released as quad-oled.zip.
-        "quad-oled".to_string()
+        // Default for older callers; the UI always sends an explicit label.
+        "wifi-16mb-octal".to_string()
     } else {
         variant.to_string()
     }
@@ -635,6 +638,20 @@ fn release_zip_variant(variant: &str) -> String {
 
 fn release_zip_name(tag: &str, variant: &str) -> String {
     format!("fluidcan-{tag}-{}.zip", release_zip_variant(variant))
+}
+
+// Older releases used names that included OLED/USB.  Keep them readable
+// while the current UI only exposes wifi/nowifi + hardware detection.
+fn legacy_variant_alias(variant: &str) -> Option<&'static str> {
+    match variant {
+        "wifi-16mb-octal" => Some("octal-oled-usb-16mb"),
+        "wifi-8mb-quad" => Some("quad-oled-usb"),
+        "wifi-8mb-octal" => Some("octal-oled-usb"),
+        "wifi-4mb-quad" => Some("quad-oled-usb-4mb"),
+        "wifi-4mb-octal" => Some("octal-oled-usb-4mb"),
+        "wifi-4mb-nopsram" => Some("nopsram-oled-usb-4mb"),
+        _ => None,
+    }
 }
 
 async fn download_release_bytes(url: &str, timeout_secs: u64) -> Result<Vec<u8>, String> {
@@ -985,7 +1002,18 @@ async fn remote_ota(
     if !is_version_tag(&tag) {
         return Err(err("版本 tag 格式无效"));
     }
-    let variant = req.variant.unwrap_or_else(|| "default".to_string());
+    let variant = req.variant.unwrap_or_default();
+    if variant.trim().is_empty() || variant == "default" {
+        return Err(err("缺少固件硬件变体（variant）；请连接设备后由 Studio 自动识别"));
+    }
+    if !WEB_FLASH_VARIANTS.contains(&variant.as_str()) {
+        return Err(err(format!("未知的固件硬件变体: {variant}")));
+    }
+    if variant.to_ascii_lowercase().starts_with("nowifi-") {
+        return Err(err(
+            "NoWiFi 固件没有网络栈，不能网络 OTA；请用 USB / Web Serial 烧录",
+        ));
+    }
     if variant_is_4mb(&variant) {
         return Err(err(format!(
             "{} 是 4 MB 单 app 分区版本，不能网络 OTA；请使用串口或 Web Serial 烧录 USB factory 镜像",
@@ -993,29 +1021,55 @@ async fn remote_ota(
         )));
     }
     let zip_name = release_zip_name(&tag, &variant);
-    let zip_url = format!(
-        "https://github.com/{GITHUB_REPO}/releases/download/{tag}/{zip_name}"
-    );
-    // can-v0.2.16+ publishes only structured per-variant zips.  Fall back to
-    // the old loose app image for older tags.
-    let (source, image) = match download_release_bytes(&zip_url, 180).await {
-        Ok(zip) => extract_ota_image(&zip, &zip_name).map_err(err)?,
-        Err(zip_err) => {
-            let old_asset = ota_asset_name(&variant);
-            let old_url = format!(
-                "https://github.com/{GITHUB_REPO}/releases/download/{tag}/{old_asset}"
-            );
-            match download_release_bytes(&old_url, 180).await {
-                Ok(data) => (old_asset, data),
-                Err(old_err) => {
-                    return Err((
-                        StatusCode::BAD_GATEWAY,
-                        Json(ApiError {
-                            error: format!(
-                                "下载 OTA 包失败：结构化 zip（{zip_name}）: {zip_err}；旧格式（{old_asset}）: {old_err}"
-                            ),
-                        }),
-                    ))
+    let mut errors = Vec::new();
+    let downloaded = match download_release_bytes(
+        &format!("https://github.com/{GITHUB_REPO}/releases/download/{tag}/{zip_name}"),
+        180,
+    )
+    .await
+    {
+        Ok(zip) => extract_ota_image(&zip, &zip_name).map(|(path, img)| (zip_name.clone(), path, img)),
+        Err(e) => Err(e),
+    };
+    let (source, image) = match downloaded {
+        Ok((name, _path, image)) => (name, image),
+        Err(e) => {
+            errors.push(format!("{zip_name}: {e}"));
+            // Old tags used quad-oled-usb / octal-oled-usb-16mb labels.
+            let mut legacy_result = None;
+            if let Some(alias) = legacy_variant_alias(&variant) {
+                let alias_zip = release_zip_name(&tag, alias);
+                match download_release_bytes(
+                    &format!("https://github.com/{GITHUB_REPO}/releases/download/{tag}/{alias_zip}"),
+                    180,
+                )
+                .await
+                {
+                    Ok(zip) => match extract_ota_image(&zip, &alias_zip) {
+                        Ok((path, img)) => legacy_result = Some((alias_zip, path, img)),
+                        Err(alias_err) => errors.push(format!("{alias_zip}: {alias_err}")),
+                    },
+                    Err(alias_err) => errors.push(format!("{alias_zip}: {alias_err}")),
+                }
+            }
+            if let Some((name, _path, image)) = legacy_result {
+                (name, image)
+            } else {
+                let old_asset = ota_asset_name(&variant);
+                let old_url = format!(
+                    "https://github.com/{GITHUB_REPO}/releases/download/{tag}/{old_asset}"
+                );
+                match download_release_bytes(&old_url, 180).await {
+                    Ok(data) => (old_asset, data),
+                    Err(old_err) => {
+                        errors.push(format!("{old_asset}: {old_err}"));
+                        return Err((
+                            StatusCode::BAD_GATEWAY,
+                            Json(ApiError {
+                                error: format!("下载 OTA 包失败：{}", errors.join("；")),
+                            }),
+                        ));
+                    }
                 }
             }
         }
@@ -1707,9 +1761,17 @@ async fn web_flash_remote_factory(
             let zip_name = release_zip_name(tag, variant);
             let zip_url =
                 format!("https://github.com/{GITHUB_REPO}/releases/download/{tag}/{zip_name}");
-            let zip = download_release_bytes(&zip_url, 180)
-                .await
-                .map_err(|zip_err| format!("{direct_err}; 新版 zip 下载失败: {zip_err}"))?;
+            let mut zip = download_release_bytes(&zip_url, 180).await;
+            if zip.is_err() {
+                if let Some(alias) = legacy_variant_alias(variant) {
+                    let alias_zip = release_zip_name(tag, alias);
+                    let alias_url = format!(
+                        "https://github.com/{GITHUB_REPO}/releases/download/{tag}/{alias_zip}"
+                    );
+                    zip = download_release_bytes(&alias_url, 180).await;
+                }
+            }
+            let zip = zip.map_err(|zip_err| format!("{direct_err}; 新版 zip 下载失败: {zip_err}"))?;
             let (_path, factory) = extract_usb_factory(&zip)?
                 .ok_or_else(|| format!("{zip_name} 中没有 USB/firmware.factory.bin"))?;
             if factory.len() > MAX_WEB_FLASH_BYTES {
@@ -2081,5 +2143,3 @@ pub fn run_android() {
         .run(tauri::generate_context!())
         .expect("run Android Tauri app");
 }
-
-

@@ -6,7 +6,7 @@ Rust + Tauri 的 FluidNC CAN 调试、控制、配置与固件安装工具，面
 
 ![桌面 GUI](docs/gui.png)
 
-当前版本：`studio-v0.4.3`
+当前版本：`studio-v0.4.4`
 
 ## 功能
 
@@ -20,7 +20,7 @@ Rust + Tauri 的 FluidNC CAN 调试、控制、配置与固件安装工具，面
 - **方向键 / 手柄控制**：默认关闭的虚拟 D-pad、键盘方向键（可选 WASD）、标准 Gamepad API 物理手柄和虚拟摇杆；统一发送一次性 `$J` 点动，支持 XY/XZ/YZ 平面、手柄 D-pad/左摇杆和死区；每次方向输入只发送一个步距，不重复排队
 - **限位开关测试（只读）**：轮询 `?` 状态中的 `Pn:` 触发位，配合 config.yaml 里的 limit_all/neg/pos 引脚显示各轴触发/释放，不会自动移动电机
 - 配置：读取/编辑/上传 `config.yaml`，上传前 YAML 语法检查
-- 远程仓库 OTA：从 GitHub Releases 读取 `can-vX.Y.Z`，`can-v0.2.16+` 自动下载结构化 zip 并提取 `OTA/firmware.bin` 上传；旧版本回退 `firmware.bin`/`{variant}-firmware.bin`；GitHub API 限流时回退 `releases.atom`
+- 远程仓库 OTA：从 GitHub Releases 读取 `can-vX.Y.Z`，固件安装页只让用户选择 WiFi / NoWiFi，Flash/PSRAM 由设备 `$I` 自动识别并选择对应结构化 zip；`can-v0.2.16+` 自动提取 `OTA/firmware.bin`；GitHub API 限流时回退 `releases.atom`
 - 网络 OTA：本地 `.bin` 或 Release `.zip`（自动提取 `OTA/firmware.bin`）上传到设备 `/updatefw`
 - 串口烧录：esptool 写本地 factory 镜像到 `0x0`（选择本地 `.bin` 或含 `firmware.factory.bin` 的 `.zip`）
 - **浏览器 Web Serial 烧录**：内嵌 esp-web-tools 组件，直接用浏览器烧录用户提供的本地固件包（标准命名 `.zip` 或单个 `.bin`），可只勾选需要更新的分区；也支持 GitHub Release 的 factory 镜像（Chrome/Edge，无需 Python/esptool）
@@ -28,7 +28,7 @@ Rust + Tauri 的 FluidNC CAN 调试、控制、配置与固件安装工具，面
 
 ## OTA / Release 包格式（can-v0.2.16+）
 
-`can-v0.2.16` 起 Release 不再发布散装 bin，每个变体只有一个结构化 zip，例如 `fluidcan-can-v0.2.16-nopsram-oled-usb-4mb.zip`：
+`can-v0.2.16` 起 Release 不再发布散装 bin，每个硬件/radio 组合一个结构化 zip，例如 `fluidcan-can-v0.2.26-wifi-16mb-octal.zip`：
 
 ```text
 <variant>/
@@ -49,10 +49,21 @@ Rust + Tauri 的 FluidNC CAN 调试、控制、配置与固件安装工具，面
     SHA256SUMS
 ```
 
-- 远程 OTA：Studio 自动下载对应变体 zip 并提取 `OTA/firmware.bin`；`can-v0.2.16` 之前仍回退散装 `firmware.bin`/`{variant}-firmware.bin`
+- 远程 OTA：Studio 根据设备 `$I` 自动选择 `wifi-<hw>` / `nowifi-<hw>` zip 并提取 `OTA/firmware.bin`；旧 tag 会尝试旧的 OLED/USB label 兼容；`can-v0.2.16` 之前仅保留历史说明
 - 本地 OTA：可直接上传上述 Release zip（自动提取 `OTA/firmware.bin`）或 app `.bin`
-- Web Serial / 串口烧录：可直接选择上述 Release zip，Studio 按标准文件名识别 `USB/` 和 `OTA/` 子目录
-- 4 MB 变体（`nopsram-oled-usb-4mb` 等）只有单 app 分区，**不能网络 OTA**；用 USB factory 或 Web Serial
+- Web Serial / 串口烧录：可直接选择上述 Release zip，Studio 按标准文件名识别 `USB/` 和 `OTA/` 子目录；远程来源同样只选 WiFi/NoWiFi，硬件自动识别
+- 4 MB 硬件（`*-4mb-quad` / `*-4mb-octal` / `*-4mb-nopsram`）只有单 app 分区，**不能网络 OTA**；用 USB factory 或 Web Serial。NoWiFi 固件没有网络栈，也只能 USB / Web Serial
+
+## 固件版本自动识别
+
+固件安装页不再让用户选择 Flash/PSRAM/USB/OLED：
+
+- 只选择 **WiFi** 或 **NoWiFi**。
+- 固件 `$I` 报告 `esp32s3-<wifi|noradio>-<8mb-quad|8mb-octal|16mb-octal|4mb-quad|4mb-octal|4mb-nopsram>`。
+- Studio 自动拼出 `wifi-16mb-octal` 等 variant，并选择对应 GitHub Release zip。
+- NoWiFi 和 4 MB 硬件不能网络 OTA，自动禁用并提示使用 USB/Web Serial。
+- can-v0.2.25 及更早没有硬件标记：Studio 会把硬件假设为 N16R8/16MB Octal，并要求勾选确认。若是 4 MB/8 MB 板，先用本地 USB 包刷入带标记的新固件，再使用自动识别。
+- 旧 release 的 OLED/USB label 由后端 alias 兼容，避免当前设备无法回滚。
 
 ## 运行模式
 
@@ -161,8 +172,8 @@ dist/FluidCAN-Studio-android-arm64.apk
 触发：
 
 ```powershell
-git tag studio-v0.4.3
-git push origin studio-v0.4.3
+git tag studio-v0.4.4
+git push origin studio-v0.4.4
 ```
 
 依赖的 Actions 使用当前最新大版本，包括：
@@ -309,12 +320,14 @@ GET /api/scan
 
 ## I2C / OLED 说明
 
-- `wifi_s3` 标准固件：已编译 I2C 总线驱动，但不包含 OLED 显示模块
-- `wifi_s3_oled` 固件：在 `wifi_s3` 基础上加入 `esp32/OLED.cpp`，用于 OLED 版本
+- `wifi-*`：WiFi 固件，默认包含 USB CDC + OLED
+- `nowifi-*`：无 WiFi 固件，默认包含 USB CDC + OLED
+- 两者都按 `$I` 报告的 Flash/PSRAM 自动匹配 `8mb-quad` / `8mb-octal` / `16mb-octal` / `4mb-*` 硬件镜像
 - 硬件配置：
   - I2C0：SDA `gpio.8`，SCL `gpio.9`，100 kHz
   - OLED：地址 `0x3C`（60），128×64
-- 远程 Release `can-v0.1.1` 起使用 `wifi_s3_oled` 构建，`can-v0.1.2` 修复了 `$I2CScan` 的 ACK 判断\n- `$I2CScan` 现在同时做硬件 I2C 和 bit-bang 扫描（含 SDA/SCL 交换），便于区分固件和硬件问题
+- 远程 Release `can-v0.1.1` 起使用 OLED 构建，`can-v0.1.2` 修复了 `$I2CScan` 的 ACK 判断
+- `$I2CScan` 现在同时做硬件 I2C 和 bit-bang 扫描（含 SDA/SCL 交换），便于区分固件和硬件问题
 - 配置中的 `oled:` 段和 `i2c0:` 段必须同时存在，否则 OLED 不会初始化
 
 如果屏幕不亮，优先检查 IO8/9 接线、模块供电、I2C 地址和 `$I2CScan` 结果。
@@ -357,7 +370,7 @@ GET /api/scan
 - 组件：`ui/js/vendor/esp-web-tools.js`（Apache-2.0，由 esp-web-tools 打包，随 UI 内嵌进 exe）
 - 来源：
   - 本地固件包 `.zip`（标准命名，可直接用 `can-v0.2.16+` 的 Release zip，自动识别 `USB/` 与 `OTA/` 子目录）或单个标准命名 `.bin`
-  - GitHub Release（Studio 自动下载变体 zip 并提取 `USB/firmware.factory.bin`；0.2.16 之前回退散装 factory 资源）
+  - GitHub Release（Studio 自动下载变体 zip 并提取 `USB/firmware.factory.bin`；远程 Web Serial 同样走硬件自动识别）
 - 流程：选择来源 → “生成烧录清单” → 勾选要更新的分区 → “连接串口并烧录”；后端 `/api/install/web/manifest` 生成 esp-web-tools manifest，`/api/install/web/image` 提供镜像
 - 标准文件名与 ESP32-S3 偏移：
 
@@ -371,7 +384,7 @@ GET /api/scan
 
 - 只更新特定分区：上传后勾选对应分区即可（例如只勾 `firmware.bin` 更新应用；同时勾 bootloader/partitions/app 做完整分区更新；或直接选择 `firmware.factory.bin` 整片写入）
 - 串口烧录（esptool）也改为本地文件：选择 `.bin` 或含 `firmware.factory.bin` 的 `.zip`，写 `0x0`
-- 限制：Web Serial 需要 Chrome/Edge 且页面为 localhost/HTTPS；局域网 http 远程模式不支持。没有 factory 镜像的 8 MB 变体继续走网络 OTA
+- 限制：Web Serial 需要 Chrome/Edge 且页面为 localhost/HTTPS；局域网 http 远程模式不支持。4 MB 和 NoWiFi 版本请用 USB factory / Web Serial
 - 烧录会覆盖所选分区，执行前请确认已备份 `config.yaml`
 
 ## 注意

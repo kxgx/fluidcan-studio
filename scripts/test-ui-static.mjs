@@ -171,6 +171,8 @@ assert.ok(connectBody.includes("loadDriverLayout"), "connectDevice must load the
 assert.ok(serialBody.includes("loadDriverLayout"), "openSerial must load the config.yaml driver layout");
 assert.ok(app.includes("parseDriverLayout") && app.includes("loadDriverLayout"), "app must parse the driver layout from config.yaml");
 assert.ok(app.includes("initDirectionControls"), "direction controls must be initialized");
+assert.ok(html.includes('id="firmwareVariant"') && html.includes('value="wifi"') && html.includes('value="nowifi"'), "firmware UI must expose only WiFi/NoWiFi");
+assert.ok(!html.includes("quad-oled-usb") && !html.includes("nopsram-oled-usb-4mb"), "old USB/OLED variant labels must not be exposed");
 const dpadView = fs.readFileSync(path.join(root, "ui/js/views/dpad.js"), "utf8");
 assert.ok(
   dpadView.includes("keyboardDirection") && (dpadView.includes("gamepadDirection") || (dpadView.includes("gamepadButtonDirection") && dpadView.includes("gamepadStickDirection"))) && dpadView.includes("stickDirection"),
@@ -207,6 +209,9 @@ for (const id of [
   assert.ok(ids.includes(id), `missing id ${id}`);
 }
 const installView = fs.readFileSync(path.join(root, "ui/js/views/install.js"), "utf8");
+assert.ok(installView.includes("parseFirmwareHardware") && installView.includes("firmwareVariant"), "installer must auto-detect hardware and radio");
+assert.ok(installView.includes("NoWiFi 固件没有网络栈"), "NoWiFi must block network OTA");
+assert.ok(!installView.includes('$("webFlashVariant").value;'), "web flash must not use the radio-only selector as a full variant");
 const libSource = fs.readFileSync(path.join(root, "src/lib.rs"), "utf8");
 assert.ok(app.includes("prepareWebFlash"), "prepareWebFlash binding missing");
 assert.ok(installView.includes("export async function prepareWebFlash"), "prepareWebFlash missing");
