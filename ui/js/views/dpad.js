@@ -1,5 +1,6 @@
 import { state, subscribe } from "../core/store.js";
 import {
+  clampFeed,
   directionLabel,
   directionToJog,
   gamepadButtonDirection,
@@ -11,7 +12,7 @@ import {
   planeAxes,
   stickDirection,
 } from "../core/direction.js";
-import { getStatus, jogStart, jogStop } from "../core/transport.js";
+import { getStatus, httpGet, httpPost, jogStart, jogStop } from "../core/transport.js";
 
 const GAMEPAD_POLL_MS = 80;
 
@@ -25,6 +26,7 @@ let rearmTimer = null;
 let stopPending = false;
 let stopRequested = false;
 let stopRetryTimer = null;
+let feedRestartTimer = null;
 let commandLock = Promise.resolve();
 
 function serialized(fn) {
@@ -54,14 +56,37 @@ function currentPlane() {
   return normalizePlane($("dpadPlane")?.value);
 }
 
+function currentMaxFeed() {
+  const raw = parseFloat($("dpadMaxFeed")?.value);
+  return Number.isFinite(raw) ? Math.min(3000, Math.max(100, raw)) : 3000;
+}
+
 function currentFeed() {
-  const value = parseFloat($("dpadFeed")?.value);
-  return Number.isFinite(value) && value > 0 ? value : 500;
+  return clampFeed($("dpadFeed")?.value, currentMaxFeed());
 }
 
 function updateFeedLabel() {
   const value = $("dpadFeedValue");
   if (value) value.textContent = `${Math.round(currentFeed())} mm/min`;
+  const slider = $("dpadFeed");
+  if (slider) slider.max = String(currentMaxFeed());
+}
+
+function applyFeedLimit() {
+  const slider = $("dpadFeed");
+  const max = currentMaxFeed();
+  if (slider) {
+    slider.max = String(max);
+    slider.value = String(clampFeed(slider.value, max));
+  }
+  updateFeedLabel();
+  try {
+    localStorage.setItem("fluidcan.jogMaxFeed", String(max));
+  } catch {
+    /* storage unavailable */
+  }
+  void httpPost("/settings", { jog_max_feed: max }).catch(() => {});
+  if (canRestartForFeed()) void startContinuous(active.direction, active.source, currentPlane(), currentFeed());
 }
 
 function layoutHasPlaneAxes(plane) {
@@ -88,6 +113,17 @@ function clearRearm() {
     clearTimeout(rearmTimer);
     rearmTimer = null;
   }
+}
+
+function clearFeedRestart() {
+  if (feedRestartTimer) {
+    clearTimeout(feedRestartTimer);
+    feedRestartTimer = null;
+  }
+}
+
+function canRestartForFeed() {
+  return Boolean(active) && !stopRequested && !stopPending;
 }
 
 function scheduleStopRetry() {
@@ -182,7 +218,7 @@ async function doStartContinuous(direction, source, plane, feed, rearm = false) 
     }
     status(`${source} ${directionLabel(plane, direction)} · 持续移动中`, "ok");
     rearmTimer = setTimeout(() => {
-      if (active?.token === token) {
+      if (canRestartForFeed() && active?.token === token) {
         void startContinuous(active.direction, active.source, currentPlane(), currentFeed(), { rearm: true });
       }
     }, step.durationMs * 0.75);
@@ -200,6 +236,7 @@ async function doStopContinuous(reason = "松开", owner = null) {
   active = null;
   ++jogToken;
   clearRearm();
+  clearFeedRestart();
   stopPending = true;
   try {
     await jogStop();
@@ -247,6 +284,7 @@ function setEnabled(next) {
   const checkbox = $("dpadEnable");
   if (checkbox) checkbox.checked = enabled;
   if (!enabled) {
+    clearFeedRestart();
     heldKeys.clear();
     lastGamepadButton = null;
     analogGamepadDirection = null;
@@ -525,10 +563,26 @@ export function initDirectionControls() {
     heldKeys.clear();
     void stopContinuous("切换平面");
   });
-  $("dpadFeed")?.addEventListener("input", updateFeedLabel);
-  $("dpadFeed")?.addEventListener("change", () => {
+  $("dpadFeed")?.addEventListener("input", () => {
     updateFeedLabel();
-    if (active) void startContinuous(active.direction, active.source, currentPlane(), currentFeed());
+    // Re-arm the current segment with the new F after a short quiet period.
+    // This is the safe live-speed path for the existing short-segment jog.
+    if (canRestartForFeed()) {
+      clearTimeout(feedRestartTimer);
+      feedRestartTimer = setTimeout(() => {
+        feedRestartTimer = null;
+        if (canRestartForFeed()) void startContinuous(active.direction, active.source, currentPlane(), currentFeed());
+      }, 140);
+    }
+  });
+  $("dpadFeed")?.addEventListener("change", () => {
+    clearFeedRestart();
+    updateFeedLabel();
+    if (canRestartForFeed()) void startContinuous(active.direction, active.source, currentPlane(), currentFeed());
+  });
+  $("dpadMaxFeed")?.addEventListener("change", applyFeedLimit);
+  $("dpadMaxFeed")?.addEventListener("input", () => {
+    if (($("dpadMaxFeed")?.value || "").length >= 3) applyFeedLimit();
   });
   bindVirtualButtons();
   bindVirtualStick();
@@ -574,6 +628,25 @@ export function initDirectionControls() {
       status("方向键已启用（按住连续移动）", "ok");
     }
   });
+  try {
+    const savedMax = Number(localStorage.getItem("fluidcan.jogMaxFeed"));
+    if (Number.isFinite(savedMax) && savedMax > 0 && $("dpadMaxFeed")) {
+      $("dpadMaxFeed").value = String(Math.min(3000, Math.max(100, savedMax)));
+    }
+  } catch {
+    /* storage unavailable */
+  }
+  // Persisted backend value works in the desktop GUI too, where every launch
+  // has a new random loopback origin and localStorage would be empty.
+  void httpGet("/settings")
+    .then((settings) => {
+      const value = Number(settings.jog_max_feed);
+      if (Number.isFinite(value) && value > 0 && $("dpadMaxFeed")) {
+        $("dpadMaxFeed").value = String(Math.min(3000, Math.max(100, value)));
+        updateFeedLabel();
+      }
+    })
+    .catch(() => {});
   updateFeedLabel();
   setEnabled(false);
 }

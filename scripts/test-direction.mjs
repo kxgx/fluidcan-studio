@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  clampFeed,
   directionLabel,
   directionToJog,
   gamepadButtonDirection,
@@ -15,6 +16,11 @@ import {
 assert.equal(normalizePlane("xy"), "XY");
 assert.equal(normalizePlane(" xz "), "XZ");
 assert.equal(normalizePlane("bogus"), "XY");
+assert.equal(clampFeed(500, 3000), 500);
+assert.equal(clampFeed(4000, 3000), 3000);
+assert.equal(clampFeed(4000, 1000), 1000);
+assert.equal(clampFeed(50, 3000), 100);
+assert.equal(clampFeed("bad", 3000), 500);
 
 assert.equal(directionToJog("XY", "left", 1, 500), "$J=G21G91X-1F500");
 assert.equal(directionToJog("XY", "right", 2, 600), "$J=G21G91X2F600");

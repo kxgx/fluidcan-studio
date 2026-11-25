@@ -6,14 +6,16 @@ Rust + Tauri 的 FluidNC CAN 调试、控制、配置与固件安装工具，面
 
 ![桌面 GUI](docs/gui.png)
 
-当前版本：`studio-v0.4.5`
+当前版本：`studio-v0.4.6`
 
 ## 功能
 
-- **设备扫描**：启动后按本机 /24 局域网探测 `$I`，只发现 FluidNC 设备并填入“扫描结果”；连接由用户手动点击“连接”
+- **设备扫描**：启动后在本机局域网探测 `$I`，只发现 FluidNC 设备并填入“扫描结果”；有上次成功设备时跳过启动扫描以避免和连接争用；连接由用户手动点击“连接”
 - 手动输入控制器地址
 - 总览：固件版本、状态、MPos、CAN 总线状态、驱动在线数量（分母来自 config.yaml 的驱动器数量）；不同协议只显示其支持的遥测
 - 通用 CAN 驱动表：地址、轴身份、协议、位置；PD42S1 额外显示误差/速度/运行/堵转/使能/到位，ZDT 位置格式单独解析，CANopen 预留
+- **固件信息**：FluidNC `$I` 完整输出、硬件变体，以及支持上报的 CAN 驱动实际固件/硬件版本（当前 ZDT 通过 `$CANDriverInfo` 的 0x1F 查询）；不支持上报的协议显示“未上报”
+- **速度控制**：方向键连续 jog 支持实时调速和 100–3000 mm/min 软件上限；上限在桌面 GUI/Android 也通过后端 `ui-settings.yaml` 持久化
 - CAN：`$CANStatus`、`$CANFaults`、`$CANPos`、`$CANDriverInfo`、`$CANScan`、`$CANAutoConfig`、`$CANReset`、`$CANLog`
 - CAN 配置面板：只读解析 config.yaml，按 can.driver 和每轴 motorN 的 pd42s1/zdt/canopen 块显示地址、协议字段、方向、速度/加速度/更新周期；警告协议混用、地址重复和方向不一致
 - 运动控制：点动、回零、解锁、使能/失能、工作坐标清零（G10 L20 P1）和驱动零位（$CANZero，按驱动协议清位置基准后自动坐标零）、任意命令；轴列表和 $CANZero 地址由 config.yaml 生成
@@ -172,8 +174,8 @@ dist/FluidCAN-Studio-android-arm64.apk
 触发：
 
 ```powershell
-git tag studio-v0.4.5
-git push origin studio-v0.4.5
+git tag studio-v0.4.6
+git push origin studio-v0.4.6
 ```
 
 依赖的 Actions 使用当前最新大版本，包括：
@@ -264,6 +266,9 @@ Android 是独立构建版本，复用同一套 Rust 后端、网页 UI 和内�
 
 ```text
 GET /api/scan
+GET /api/firmware       # $I + $CANDriverInfo（后台，慢 CAN 不阻塞连接）
+GET /api/settings       # { jog_max_feed }
+PUT /api/settings       # { jog_max_feed: 100..3000 }
 ```
 
 行为：
@@ -276,7 +281,8 @@ GET /api/scan
 
 “扫描”和“连接”是两个独立流程，串口是第三条独立链路：
 
-- 启动时只自动扫描一次，不会自动连接
+- 启动时只自动扫描一次（有上次成功设备时跳过），不会自动连接
+- 上次成功设备由后端持久化到 `%APPDATA%\FluidCAN Studio\last-device.txt`（Linux/Android 为 `$HOME/FluidCAN Studio/last-device.txt`），只用于预填地址，不会设置活动连接
 - **扫描设备**：只扫描局域网设备；单台时把地址填入输入框，多台时从“扫描结果”下拉框选择
 - **连接**：只用输入框中的地址（或扫描结果选中项）建立 WiFi 连接；地址为空时给出提示，不会自动触发扫描
 - **打开串口**：单独打开串口链路，与 WiFi 连接/扫描互不触发
@@ -284,12 +290,12 @@ GET /api/scan
 
 ## 连接 / 扫描延迟
 
-- **连接**只等待 `$I` 和 `?` 两个快速状态命令（并行，通常 <0.5 s）；CAN 驱动数据在后台读取，不再阻塞连接流程
-- CAN 报告命令（`$CANFaults`、`$CANPos` 等）在驱动器未上电时可能很慢（数秒到数十秒），总览中的 CAN 数据会显示“CAN 读取中…”并在后台完成；概览只请求 `$CANStatus`/`$CANFaults`/`$CANPos`，不请求不用于表格的 `$CANDriverInfo`
-- **扫描**使用共享 HTTP 客户端、128 并发、600 ms 探测超时，通常 1 s 左右返回（原来约 7 s）
+- **连接**只等待后端 `POST /api/connect` 的 `$I` 探测（通常 <0.5 s）；按钮在探测成功后立即释放，状态/CAN/固件信息在后台按 status → CAN → firmware 顺序读取，慢 CAN 报告不再卡“连接中…”
+- CAN 报告命令（`$CANFaults`、`$CANPos` 等）在驱动器未上电时可能很慢（数秒到数十秒），总览中的 CAN 数据会显示“CAN 读取中…”并在后台完成
+- **扫描**使用共享 HTTP 客户端、128 并发、600 ms 探测超时，通常 1 s 左右返回（原来约 7 s）；PC 有多个虚拟网卡时耗时取决于网段数量，有上次设备时会跳过启动扫描
 - **连接失败**探测超时 3 s（原来 20 s），填错地址可快速重试
-- 启动时自动填入**上次成功连接**的设备地址（只填入，不自动连接），可直接点“连接”；扫描到新设备时会替换未手动修改过的旧地址
-- 串口模式状态刷新同样只走快速状态命令
+- 串口模式状态刷新同样只走快速状态命令；串口 `$CANDriverInfo` 单独放宽到 12 s，避免被控制台命令的 1.6 s 期限截断
+- **速度上限**保存到后端 `ui-settings.yaml`，桌面 GUI/Android 重启后仍生效；它只是 UI 软上限，固件 `max_speed`/`max_rate` 仍是硬上限
 
 错误处理约定：
 

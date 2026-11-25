@@ -1,6 +1,6 @@
 import * as transport from "./core/transport.js";
 import { patch, state } from "./core/store.js";
-import { refreshStatus, refreshCanData } from "./views/overview.js";
+import { refreshStatus, refreshCanData, refreshFirmwareInBackground, resetOverviewPanels } from "./views/overview.js";
 import { runCanCommand } from "./views/can.js";
 import { clearLog, jog, log, sendCommand, sendConsole, sendQuick, zeroAll, zeroAxis, zeroDriverAll, zeroDriverAxis } from "./views/control.js";
 import { loadConfig, saveConfig } from "./views/config.js";
@@ -42,6 +42,25 @@ function setBusyButton(id, busy, idleText, busyText) {
 
 // Repaint the connection pill from the active transport.  A transient read
 // failure must not leave a stale "读取失败" pill after the link recovers.
+function resetDeviceState() {
+  // A new link must not inherit the previous controller's build, driver
+  // firmware report or CAN snapshot.  The install view uses state.build for
+  // hardware auto-detection, so stale values are a safety issue, not just UI.
+  canRefreshPromise = null;
+  canRefreshKey = "";
+  patch({
+    build: "",
+    buildSource: "",
+    status: "",
+    can: { status: "", faults: "", positions: "", drivers: "" },
+    firmwareDrivers: "",
+    firmwareError: "",
+    driverLayout: null,
+    drivers: [],
+  });
+  resetOverviewPanels();
+}
+
 function setLinkPillFromTransport() {
   const mode = transport.currentMode();
   if (mode === "serial") {
@@ -62,15 +81,25 @@ function setScanPill(text, kind = "") {
 // so they never block connecting or status refreshes.  Only one CAN read runs
 // at a time; extra requests reuse the in-flight one.
 let canRefreshPromise = null;
+let canRefreshKey = "";
+
+function currentTransportKey() {
+  return transport.currentMode() === "serial"
+    ? "serial:" + transport.currentSerial()
+    : "http:" + transport.currentHttpBase();
+}
 
 function refreshCanInBackground(reason = "") {
-  if (canRefreshPromise) {
+  const key = currentTransportKey();
+  if (canRefreshPromise && canRefreshKey === key) {
     log("CAN 数据正在读取中" + (reason ? `（${reason}）` : ""));
     return canRefreshPromise;
   }
+  canRefreshKey = key;
   log("CAN 数据后台读取中…（不阻塞连接/状态；驱动器未上电时可能较慢）");
   canRefreshPromise = refreshCanData()
     .then((result) => {
+      if (result?.stale) return result;
       log(`CAN 数据已更新（${(result.elapsedMs / 1000).toFixed(1)}s）`, "ok");
       return result;
     })
@@ -79,7 +108,10 @@ function refreshCanInBackground(reason = "") {
       return { error: String(e) };
     })
     .finally(() => {
-      canRefreshPromise = null;
+      if (canRefreshKey === key) {
+        canRefreshPromise = null;
+        canRefreshKey = "";
+      }
     });
   return canRefreshPromise;
 }
@@ -99,8 +131,10 @@ function applyAxisOptions(layout) {
 // driver-zero commands are disabled instead of falling back to hard-coded
 // addresses.
 async function loadDriverLayout() {
+  const expected = currentTransportKey();
   try {
     const j = await transport.getDeviceConfig();
+    if (currentTransportKey() !== expected) return null;
     const layout = parseDriverLayout(parseConfigMap(j.yaml));
     patch({ driverLayout: layout });
     applyAxisOptions(layout);
@@ -112,6 +146,7 @@ async function loadDriverLayout() {
     for (const warning of layout.warnings) log("config.yaml 警告: " + warning, "err");
     return layout;
   } catch (e) {
+    if (currentTransportKey() !== expected) return null;
     patch({ driverLayout: null });
     log("读取 config.yaml 失败，驱动计数/零位地址不可用: " + e, "err");
     return null;
@@ -239,17 +274,20 @@ async function connectDevice() {
     log(`WiFi 已连接 ${base}（${Date.now() - started} ms），正在同步状态…`, "ok");
     // Driver layout is parsed from the device's config.yaml; it does not block
     // the connect flow.
-    patch({ driverLayout: null });
+    resetDeviceState();
     void loadDriverLayout();
-    // Only the fast status path blocks the connect flow; CAN data is slow and
-    // loads in the background.
-    try {
-      await refreshStatus();
-      log(`状态已同步（${((Date.now() - started) / 1000).toFixed(1)}s）`, "ok");
-    } catch (e) {
-      log("已连接，但读取状态失败: " + e, "err");
-    }
-    refreshCanInBackground("连接后");
+    // The probe already proved the link.  Do not keep the button in
+    // "连接中..." while the separate status/CAN reports run; a slow/busy
+    // controller must not make a successful connect look stuck.
+    // The controller's command channel is single-threaded.  Finish the fast
+    // status query before starting the slow CAN reports, otherwise a pending
+    // CAN report can delay `$I`/`?` and make a healthy link look broken.
+    void refreshStatus()
+      .then(() => log(`状态已同步（${((Date.now() - started) / 1000).toFixed(1)}s）`, "ok"))
+      .catch((e) => log("已连接，但读取状态失败: " + e, "err"))
+      .finally(() => {
+        refreshCanInBackground("连接后").finally(() => void refreshFirmwareInBackground());
+      });
   } catch (e) {
     setConn(false, "连接失败");
     log(String(e), "err");
@@ -259,7 +297,16 @@ async function connectDevice() {
   }
 }
 
-async function refreshPorts() {
+let portsRefreshPromise = null;
+function refreshPorts() {
+  if (portsRefreshPromise) return portsRefreshPromise;
+  portsRefreshPromise = refreshPortsOnce().finally(() => {
+    portsRefreshPromise = null;
+  });
+  return portsRefreshPromise;
+}
+
+async function refreshPortsOnce() {
   try {
     const j = await transport.ports();
     const ports = j.ports || [];
@@ -299,16 +346,15 @@ async function openSerial() {
     const j = await transport.openSerial(port);
     setConn(true, "串口 " + port);
     log("串口已打开 " + JSON.stringify(j) + "（串口链路）", "ok");
-    patch({ driverLayout: null });
+    resetDeviceState();
     void loadDriverLayout();
     startSerialPoll();
-    try {
-      await refreshStatus();
-      log(`状态已同步（${((Date.now() - started) / 1000).toFixed(1)}s）`, "ok");
-    } catch (e) {
-      log("串口已打开，但读取状态失败: " + e, "err");
-    }
-    refreshCanInBackground("串口连接后");
+    void refreshStatus()
+      .then(() => log(`状态已同步（${((Date.now() - started) / 1000).toFixed(1)}s）`, "ok"))
+      .catch((e) => log("串口已打开，但读取状态失败: " + e, "err"))
+      .finally(() => {
+        refreshCanInBackground("串口连接后").finally(() => void refreshFirmwareInBackground());
+      });
   } catch (e) {
     log(String(e), "err");
     // A failed serial open must not paint over an already working WiFi link.
@@ -349,7 +395,7 @@ async function refreshAll() {
     if (!state.driverLayout) void loadDriverLayout();
     setLinkPillFromTransport();
     log(`状态已刷新（${((Date.now() - started) / 1000).toFixed(1)}s），CAN 数据后台读取中`, "ok");
-    refreshCanInBackground("刷新");
+    refreshCanInBackground("刷新").finally(() => void refreshFirmwareInBackground());
   } catch (e) {
     log(String(e), "err");
     setConn(false, "读取失败");
@@ -424,6 +470,16 @@ async function boot() {
   } catch {
     /* localStorage may be unavailable */
   }
+  // Desktop GUI serves the UI from a random loopback port on each launch, so
+  // localStorage is a fresh origin and cannot remember the device.  The Rust
+  // backend returns its persisted last device here instead.
+  try {
+    const health = await transport.httpGet("/health");
+    if ($("appVersion")) $("appVersion").textContent = "Studio " + (health.version || "--");
+    if (!lastDevice && health.default_device) lastDevice = String(health.default_device);
+  } catch (e) {
+    log("读取 Studio 信息失败: " + e, "err");
+  }
   if (lastDevice && $("deviceUrl") && !$("deviceUrl").value.trim()) {
     $("deviceUrl").value = lastDevice;
     autoPrefilledDevice = lastDevice;
@@ -435,8 +491,24 @@ async function boot() {
     autoPrefilledDevice = "";
   });
   log("FluidCAN Studio 已启动：“扫描设备”只发现设备，“连接”用地址输入框/扫描结果建立 WiFi 连接，串口是独立链路；启动只自动扫描一次，不自动连接。");
-  setTimeout(scanDevices, 600);
-  refreshPorts();
+  // A remembered device is already usable.  Do not launch a 254-host scan at
+  // the same moment the user clicks connect: on a PC with several virtual
+  // adapters that scan competes with the connect probe and is the main source
+  // of the "连接中..." delay (Android usually has only one Wi-Fi subnet).
+  if (lastDevice) {
+    log("已有上次设备，跳过启动扫描以避免和连接探测争用；需要发现新设备时点“扫描设备”");
+  } else {
+    setTimeout(scanDevices, 600);
+  }
+  // Serial enumeration can be slow on Windows (Bluetooth/virtual COM ports).
+  // Populate lazily when the serial controls are first used instead of at boot.
+  const lazyPorts = (id) => {
+    $(id)?.addEventListener("focus", () => {
+      if (($(id).options?.length || 0) <= 1) void refreshPorts();
+    }, { once: true });
+  };
+  lazyPorts("serialPorts");
+  lazyPorts("flashPort");
   $("serialPorts")?.addEventListener("change", () => {
     if ($("serialPorts").value) $("flashPort").value = $("serialPorts").value;
   });

@@ -13,15 +13,19 @@ const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]);
 for (const id of ids) {
   assert.equal(ids.filter((x) => x === id).length, 1, `duplicate id ${id}`);
 }
-for (const id of ["dualYBox", "dualYMsg", "driverTable", "view-can", "dpadEnable", "dpadPlane", "dpadWasd", "dpadFeed", "dpadFeedValue", "dpadFieldset", "dpadPad", "virtualStick", "stickKnob", "dpadStatus", "gamepadStatus"]) {
+for (const id of ["dualYBox", "dualYMsg", "driverTable", "fwDetailBox", "fwDriverTable", "fwRaw", "view-can", "dpadEnable", "dpadPlane", "dpadWasd", "dpadFeed", "dpadFeedValue", "dpadMaxFeed", "dpadFieldset", "dpadPad", "virtualStick", "stickKnob", "dpadStatus", "gamepadStatus", "appVersion"]) {
   assert.ok(ids.includes(id), `missing id ${id}`);
 }
 
 const driverHead = html.match(/<tbody id="driverTable"><tr><td colspan="(\d+)"/);
 assert.ok(driverHead, "driver table empty row missing");
-const driverHeaders = (html.match(/<thead><tr>(.*?)<\/tr><\/thead><tbody id="driverTable"/s) || [])[1];
+// There are several tables now; use the header immediately preceding the
+// driverTable body rather than the first <thead> in the document.
+const driverBodyAt = html.indexOf('<tbody id="driverTable"');
+const driverHeadAt = html.lastIndexOf('<thead>', driverBodyAt);
+const driverHeaders = (html.slice(driverHeadAt, driverBodyAt).match(/<th>/g) || []).length;
 if (driverHeaders) {
-  const count = (driverHeaders.match(/<th>/g) || []).length;
+  const count = driverHeaders;
   assert.equal(Number(driverHead[1]), count, "driver table colspan mismatch");
 }
 

@@ -90,6 +90,12 @@ struct WebFlashQuery {
 struct AppState {
     client: reqwest::Client,
     base: Arc<tokio::sync::RwLock<String>>,
+    // Last successful device, used only as a UI prefill.  It is deliberately
+    // separate from `base`: the active base must stay empty until /connect
+    // succeeds, otherwise a "not connected" UI could still issue commands to a
+    // remembered machine.
+    saved_base: Arc<tokio::sync::RwLock<String>>,
+    jog_max_feed: Arc<tokio::sync::RwLock<u16>>,
     serial: Arc<Mutex<SerialState>>,
     serial_log: Arc<Mutex<Vec<String>>>,
     serial_exec_lock: Arc<tokio::sync::Mutex<()>>,
@@ -225,6 +231,77 @@ async fn current_base(state: &AppState) -> String {
     state.base.read().await.clone()
 }
 
+// The desktop GUI starts its embedded server on a random loopback port, so
+// localStorage is scoped to a new origin on every launch.  Persist the last
+// successful device in the app data directory instead; it is a UI prefill,
+// never an automatic connection.
+fn last_device_file() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    let root = std::env::var_os("APPDATA").map(PathBuf::from);
+    #[cfg(not(target_os = "windows"))]
+    let root = std::env::var_os("HOME").map(PathBuf::from);
+    root.map(|p| p.join("FluidCAN Studio").join("last-device.txt"))
+}
+
+fn load_last_device() -> String {
+    last_device_file()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .map(|text| normalize_base(text.trim()))
+        .unwrap_or_default()
+}
+
+fn persistable_base(base: &str) -> String {
+    let normalized = normalize_base(base);
+    if let Ok(mut url) = reqwest::Url::parse(&normalized) {
+        let _ = url.set_username("");
+        let _ = url.set_password(None);
+        url.set_query(None);
+        url.set_fragment(None);
+        return url.to_string().trim_end_matches('/').to_string();
+    }
+    normalized
+}
+
+fn save_last_device(base: &str) {
+    let base = persistable_base(base);
+    if base.is_empty() {
+        return;
+    }
+    let Some(path) = last_device_file() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, base);
+}
+
+fn settings_file() -> Option<PathBuf> {
+    last_device_file().and_then(|p| p.parent().map(|parent| parent.join("ui-settings.yaml")))
+}
+
+fn load_jog_max_feed() -> u16 {
+    settings_file()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|text| {
+            text.lines()
+                .find_map(|line| line.trim().strip_prefix("jog_max_feed:"))
+                .and_then(|value| value.trim().parse::<u16>().ok())
+        })
+        .map(|value| value.clamp(100, 3000))
+        .unwrap_or(3000)
+}
+
+fn save_jog_max_feed(value: u16) {
+    let Some(path) = settings_file() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, format!("jog_max_feed: {}\n", value.clamp(100, 3000)));
+}
+
 async fn install_toolchain(State(st): State<Arc<AppState>>) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
     let tool = ensure_official_esptool(&st)
         .await
@@ -236,6 +313,24 @@ async fn install_toolchain(State(st): State<Arc<AppState>>) -> Result<Json<Value
         "version": BUILD_ESPTOOL_VERSION,
         "asset": BUILD_ESPTOOL_ASSET,
     })))
+}
+
+#[derive(Deserialize)]
+struct UiSettingsReq {
+    jog_max_feed: u16,
+}
+
+async fn get_settings(State(st): State<Arc<AppState>>) -> Json<Value> {
+    Json(json!({ "jog_max_feed": *st.jog_max_feed.read().await }))
+}
+
+async fn set_settings(State(st): State<Arc<AppState>>, Json(req): Json<UiSettingsReq>) -> Json<Value> {
+    if !(100..=3000).contains(&req.jog_max_feed) {
+        return Json(json!({"error": "jog_max_feed must be 100..3000"}));
+    }
+    *st.jog_max_feed.write().await = req.jog_max_feed;
+    save_jog_max_feed(req.jog_max_feed);
+    Json(json!({ "ok": true, "jog_max_feed": req.jog_max_feed }))
 }
 
 async fn toolchain_info() -> Json<Value> {
@@ -257,7 +352,8 @@ async fn health(State(st): State<Arc<AppState>>) -> Json<Value> {
         "status": "ok",
         "app": "FluidCAN Studio",
         "version": env!("CARGO_PKG_VERSION"),
-        "default_device": current_base(&st).await,
+        "default_device": st.saved_base.read().await.clone(),
+        "jog_max_feed": *st.jog_max_feed.read().await,
         "mode": "gui",
         "web_serial_flash": true,
     }))
@@ -278,7 +374,9 @@ async fn connect(State(st): State<Arc<AppState>>, Json(req): Json<ConnectReq>) -
     match probe {
         Ok(text) => {
             *st.base.write().await = requested.clone();
+            *st.saved_base.write().await = requested.clone();
             *st.live.lock().unwrap() = None;
+            save_last_device(&requested);
             Json(json!({
                 "base": requested,
                 "requested": requested,
@@ -343,6 +441,27 @@ async fn get_can(State(st): State<Arc<AppState>>, Query(query): Query<CanQuery>)
         };
     }
     Json(out).into_response()
+}
+
+// Board build string plus per-driver firmware/hardware versions reported by
+// $CANDriverInfo.  Kept out of /status so the fast connect/status path is not
+// blocked by the CAN report (which can take seconds on an unpowered bus).
+async fn get_firmware(State(st): State<Arc<AppState>>) -> Response {
+    let base = current_base(&st).await;
+    let (build, drivers) = tokio::join!(
+        device_command_timeout(&st.client, &base, "$I", STATUS_COMMAND_TIMEOUT),
+        device_command_timeout(&st.client, &base, "$CANDriverInfo", CAN_COMMAND_TIMEOUT),
+    );
+    let field = |result: Result<String, String>| match result {
+        Ok(v) => json!(v),
+        Err(e) => json!({"error": e}),
+    };
+    Json(json!({
+        "base": base,
+        "build": field(build),
+        "drivers": field(drivers),
+    }))
+    .into_response()
 }
 
 async fn run_command(
@@ -609,7 +728,14 @@ async fn serial_exec(
         .unwrap()
         .push(format!("> {}", req.command.trim()));
 
-    let deadline = std::time::Instant::now() + Duration::from_millis(1600);
+    // $CANDriverInfo can legitimately take several seconds on a partially
+    // populated bus; do not truncate it at the normal console-command deadline.
+    let timeout_ms = if req.command.trim().eq_ignore_ascii_case("$CANDriverInfo") {
+        12000
+    } else {
+        1600
+    };
+    let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms);
     loop {
         let lines = {
             let log = st.serial_log.lock().unwrap();
@@ -2012,14 +2138,19 @@ async fn ui_css(AxPath(path): AxPath<String>) -> Response {
 }
 
 fn build_state(web_token: Option<String>) -> Arc<AppState> {
+    let env_base = std::env::var("FLUIDCAN_DEVICE")
+        .map(|value| normalize_base(&value))
+        .unwrap_or_default();
+    let saved_base = if env_base.is_empty() { load_last_device() } else { env_base.clone() };
+    let active_base = env_base;
     Arc::new(AppState {
         client: reqwest::Client::builder()
             .timeout(Duration::from_secs(25))
             .build()
             .expect("build http client"),
-        base: Arc::new(tokio::sync::RwLock::new(normalize_base(
-            &std::env::var("FLUIDCAN_DEVICE").unwrap_or_else(|_| DEFAULT_DEVICE.to_string()),
-        ))),
+        base: Arc::new(tokio::sync::RwLock::new(active_base)),
+        saved_base: Arc::new(tokio::sync::RwLock::new(saved_base)),
+        jog_max_feed: Arc::new(tokio::sync::RwLock::new(load_jog_max_feed())),
         serial: Arc::new(Mutex::new(SerialState::default())),
         serial_log: Arc::new(Mutex::new(Vec::new())),
         serial_exec_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -2060,10 +2191,12 @@ async fn web_auth(State(st): State<Arc<AppState>>, req: Request, next: Next) -> 
 fn build_router(state: Arc<AppState>) -> Router {
     let api = Router::new()
         .route("/health", get(health))
+        .route("/settings", get(get_settings).put(set_settings))
         .route("/toolchain", get(toolchain_info))
         .route("/toolchain/install", post(install_toolchain))
         .route("/connect", post(connect))
         .route("/status", get(get_status))
+        .route("/firmware", get(get_firmware))
         .route("/can", get(get_can))
         .route("/command", post(run_command))
         .route("/config", get(get_config).put(put_config))

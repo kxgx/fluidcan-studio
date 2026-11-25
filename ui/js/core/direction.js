@@ -22,6 +22,16 @@ export function normalizePlane(value) {
   return DPAD_PLANES[key] ? key : "XY";
 }
 
+// UI-side safety cap.  The firmware axis max_rate remains the hard limit; this
+// only prevents a stored/typed jog value from exceeding the operator's chosen
+// software ceiling.
+export function clampFeed(value, max = 3000) {
+  const ceiling = Number.isFinite(Number(max)) ? Math.min(3000, Math.max(100, Number(max))) : 3000;
+  const feed = Number(value);
+  if (!Number.isFinite(feed) || feed <= 0) return 500;
+  return Math.min(ceiling, Math.max(100, feed));
+}
+
 export function directionToJog(plane, direction, distance = 1, feed = 500) {
   const config = DPAD_PLANES[normalizePlane(plane)];
   const vector = VECTORS[String(direction ?? "").trim().toLowerCase()];

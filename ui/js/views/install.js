@@ -1,4 +1,4 @@
-import { getStatus, httpGet, httpPost } from "../core/transport.js";
+import { currentHttpBase, currentMode, getStatus, httpGet, httpPost } from "../core/transport.js";
 import { firmwareVariant, isFourMbHardware, parseFirmwareHardware } from "../core/firmware.js";
 import { patch, state } from "../core/store.js";
 
@@ -7,6 +7,12 @@ let releasesLoaded = false;
 
 function hardwareInfo() {
   return parseFirmwareHardware(state.build);
+}
+
+// OTA writes through the HTTP backend.  Never combine a build read over serial
+// (or from another device) with the backend's current HTTP target.
+function otaTargetMatches() {
+  return currentMode() === "http" && Boolean(state.buildSource) && state.buildSource === currentHttpBase();
 }
 
 function detectedHardware() {
@@ -70,7 +76,7 @@ async function ensureBuild() {
   try {
     const s = await getStatus();
     if (s && typeof s.build === "string" && s.build) {
-      patch({ build: s.build, status: s.state || state.status });
+      patch({ build: s.build, buildSource: s.base || "", status: s.state || state.status });
     }
   } catch {
     /* not connected; the UI will ask the user to connect */
@@ -90,9 +96,13 @@ export function updateVariantState() {
   const four = isFourMb();
   if (variantSelect) variantSelect.disabled = !releasesLoaded;
   if (releaseSelect) releaseSelect.disabled = !releasesLoaded;
-  if (button) button.disabled = !releasesLoaded || !hasVariant() || four || noWifi;
+  const targetOk = otaTargetMatches();
+  if (button) button.disabled = !releasesLoaded || !hasVariant() || four || noWifi || !targetOk;
   if (!warn) return;
-  if (!releasesLoaded) {
+  if (!targetOk) {
+    warn.textContent = "网络 OTA 目标与当前硬件识别来源不一致：请先用 WiFi 连接目标设备并刷新版本，不要用串口读取的 build 给其他 HTTP 设备刷机。";
+    warn.className = "sub badtxt";
+  } else if (!releasesLoaded) {
     warn.textContent = "请先获取版本列表；连接设备后会自动识别硬件。";
     warn.className = "sub";
   } else if (legacyNeedsConfirm() && !legacyConfirmed()) {
@@ -176,6 +186,7 @@ export async function refreshRemote() {
 
 export async function remoteOta() {
   if (!releasesLoaded) throw new Error("先获取版本列表");
+  if (!otaTargetMatches()) throw new Error("网络 OTA 目标与硬件识别来源不一致，请先用 WiFi 连接目标设备并刷新版本");
   if (!hasVariant()) throw new Error("未识别硬件，请先连接设备");
   if (isNoWifi()) throw new Error("NoWiFi 固件没有网络栈，不能网络 OTA；请用 USB / Web Serial 烧录");
   if (isFourMb()) throw new Error("4 MB 版本不能网络 OTA，请使用串口或 Web Serial 烧录 factory 镜像");
@@ -190,6 +201,7 @@ export async function remoteOta() {
 }
 
 export async function otaUpload() {
+  if (!otaTargetMatches()) throw new Error("网络 OTA 目标与硬件识别来源不一致，请先用 WiFi 连接目标设备并刷新版本");
   const file = $("otaFile").files[0];
   if (!file) throw new Error("选择 .zip 固件包或 app .bin");
   const form = new FormData();

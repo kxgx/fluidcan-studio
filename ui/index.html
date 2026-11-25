@@ -22,6 +22,7 @@
   <button id="openSerialBtn" onclick="openSerial()" title="打开串口链路（独立于 WiFi 连接）">打开串口</button>
   <span id="connPill" class="pill">未连接</span>
   <span class="grow"></span>
+  <span id="appVersion" class="pill" title="Studio 版本（用于区分 PC/Android 构建）">--</span>
   <span id="clock" class="pill"></span>
 </header>
 <div class="layout">
@@ -41,6 +42,13 @@
       <div class="card"><h3>状态</h3><div id="stateBox" class="kvbox"><span>未读取</span></div></div>
       <div class="card"><h3>CAN 总线</h3><div id="canBox" class="kvbox"><span>未读取</span></div></div>
       <div class="card"><h3>驱动在线</h3><div id="drvBox" class="kvbox"><span>未读取</span></div></div>
+    </div>
+    <h2>固件信息</h2>
+    <div class="card">
+      <div id="fwDetailBox" class="kvbox"><span>连接后读取</span></div>
+      <details style="margin-top:8px"><summary class="sub" style="cursor:pointer">完整 $I 输出</summary><pre id="fwRaw">--</pre></details>
+      <table style="margin-top:10px"><thead><tr><th>地址</th><th>轴</th><th>协议</th><th>配置固件族</th><th>实际固件</th><th>硬件</th></tr></thead><tbody id="fwDriverTable"><tr><td colspan="6" class="muted">连接后读取 $CANDriverInfo</td></tr></tbody></table>
+      <div class="sub" style="margin-top:6px">实际固件来自驱动器的 CAN 0x1F 查询（当前 ZDT 实现）；配置固件族来自 config.yaml（Emm/X，不是版本号）。不支持上报的协议显示“未上报”。</div>
     </div>
     <h2>CAN 驱动</h2>
     <div class="card"><table><thead><tr><th>地址</th><th>轴</th><th>协议</th><th>位置</th><th>误差</th><th>速度</th><th>运行</th><th>堵转</th><th>使能</th><th>到位</th></tr></thead><tbody id="driverTable"><tr><td colspan="10" class="muted">点击“刷新”读取</td></tr></tbody></table></div>
@@ -120,6 +128,7 @@
         </label>
         <label><input type="checkbox" id="dpadWasd"> WASD</label>
         <label>速度 <input type="range" id="dpadFeed" min="100" max="3000" step="50" value="500" style="width:150px;vertical-align:middle"> <span id="dpadFeedValue" class="mono">500 mm/min</span></label>
+      <label>上限 <input id="dpadMaxFeed" type="number" min="100" max="3000" step="50" value="3000" style="width:90px"> <span class="mono">mm/min</span></label>
         <span id="dpadStatus" class="pill warn2">方向键未启用</span>
       </div>
       <fieldset id="dpadFieldset" class="dpad-fieldset" disabled>

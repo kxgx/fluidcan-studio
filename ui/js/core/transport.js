@@ -85,19 +85,23 @@ export async function jogStop() {
 }
 
 // Execute one FluidNC console command through the active transport.
-export async function exec(command) {
+export async function execRaw(command) {
   if (mode === "serial") {
-    const j = await api("/serial/exec", {
+    return api("/serial/exec", {
       method: "POST",
       body: JSON.stringify({ command }),
     });
-    return j.text || "";
   }
   const j = await api("/command", {
     method: "POST",
     body: JSON.stringify({ command }),
   });
-  return j.output || "";
+  return { text: j.output || "", ok: true };
+}
+
+export async function exec(command) {
+  const j = await execRaw(command);
+  return j.text || "";
 }
 
 // Uniform status snapshot for the overview.
@@ -123,6 +127,21 @@ export async function getCan(light = false) {
     return out;
   }
   return api("/can" + (light ? "?light=1" : ""));
+}
+
+// Board build string plus the ZDT firmware/hardware report.  The HTTP backend
+// reads both in parallel; serial has to issue the two console commands
+// sequentially.  Callers run this in the background, never before connect.
+export async function getFirmware() {
+  if (mode === "serial") {
+    const build = await exec("$I");
+    const drivers = await execRaw("$CANDriverInfo");
+    if (!drivers.ok) {
+      throw new Error("串口 $CANDriverInfo 超时/被截断（驱动可能未全部上电）");
+    }
+    return { base: "serial:" + serialName, build, drivers: drivers.text || "" };
+  }
+  return api("/firmware");
 }
 
 // Device configuration (config.yaml).  WiFi reads /api/config; the serial link

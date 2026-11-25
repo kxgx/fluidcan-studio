@@ -1,8 +1,17 @@
-import { getStatus, getCan, isSerial } from "../core/transport.js";
+import {
+  currentHttpBase,
+  currentMode,
+  currentSerial,
+  getStatus,
+  getCan,
+  getFirmware,
+  isSerial,
+} from "../core/transport.js";
 import { asText, driverRows, pick, stateParts } from "../core/parsers.js";
-import { patch, state } from "../core/store.js";
+import { patch, state, subscribe } from "../core/store.js";
 import { driverMetaMap } from "../core/drivers.js";
 import { renderCanView } from "./can.js";
+import { firmwareDriverRows, parseBoardInfo } from "../core/firmwareinfo.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -48,12 +57,145 @@ function firmwareVersion(build) {
   return pick(build, /FluidNC\s+v([^\s]+)/i);
 }
 
+function renderBoardFirmware(build) {
+  const info = parseBoardInfo(build);
+  const details = $("fwDetailBox");
+  if (details) {
+    details.innerHTML = [
+      ["版本", info.version || "--"],
+      ["MCU", info.mcu || "--"],
+      ["硬件变体", info.hardware || "--"],
+      ["选项", info.options || "--"],
+      ["机器", info.machine || "--"],
+    ].map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("");
+  }
+  const raw = $("fwRaw");
+  if (raw) raw.textContent = info.raw || "--";
+  renderDriverFirmware();
+}
+
+function renderDriverFirmware(driversText = "", error = "") {
+  const table = $("fwDriverTable");
+  if (!table) return;
+  if (state.connected && !driversText && !error) {
+    table.innerHTML = '<tr><td colspan="6" class="muted">固件信息读取中…</td></tr>';
+    return;
+  }
+  const rows = firmwareDriverRows(state.driverLayout, driversText, error);
+  if (!rows.length) {
+    table.innerHTML = state.driverLayout
+      ? '<tr><td colspan="6" class="muted">固件信息读取中…</td></tr>'
+      : '<tr><td colspan="6" class="muted">等待 config.yaml</td></tr>';
+    return;
+  }
+  table.innerHTML = rows
+    .map(
+      (d) => `<tr>
+        <td class="mono">${esc(d.address)}</td><td>${esc(d.role)}</td><td>${esc(d.protocol)}</td>
+        <td>${esc(d.configuredFirmware)}</td><td class="${d.firmware === "无响应" || d.firmware === "读取失败" ? "warntxt" : d.firmware === "未上报" ? "muted" : "oktxt"}">${esc(d.firmware)}</td>
+        <td>${esc(d.hardware)}</td></tr>`,
+    )
+    .join("");
+}
+
+function currentLinkKey() {
+  return `${currentMode()}|${currentMode() === "serial" ? currentSerial() : currentHttpBase()}`;
+}
+
+function firmwareKey() {
+  return currentLinkKey();
+}
+
+// $CANDriverInfo is a separate, potentially slow CAN report.  Never put it on
+// the connect/status path; render the board banner immediately and fill the
+// per-driver actual firmware from the background request.  The key prevents an
+// in-flight response for device A from repainting device B after a reconnect.
+let firmwareRefreshPromise = null;
+let firmwareRefreshKey = "";
+
+export async function refreshFirmwareData(key = firmwareKey()) {
+  renderBoardFirmware(state.build || "");
+  if (!state.connected || !key.endsWith("|")) {
+    return { skipped: true };
+  }
+  try {
+    const report = await getFirmware();
+    if (firmwareKey() !== key) return { skipped: true };
+    const rawDrivers = report.drivers;
+    let drivers = "";
+    let error = "";
+    if (typeof rawDrivers === "string") {
+      drivers = rawDrivers;
+    } else if (rawDrivers && typeof rawDrivers === "object" && rawDrivers.error) {
+      error = String(rawDrivers.error);
+    }
+    if (typeof report.build === "string" && report.build && !state.build) {
+      patch({ build: report.build });
+      renderBoardFirmware(report.build);
+    }
+    patch({ firmwareDrivers: drivers, firmwareError: error });
+    renderDriverFirmware(drivers, error);
+    return report;
+  } catch (e) {
+    if (firmwareKey() === key) {
+      patch({ firmwareError: String(e) });
+      renderDriverFirmware("", String(e));
+    }
+    return { error: String(e) };
+  }
+}
+
+export function refreshFirmwareInBackground() {
+  const key = firmwareKey();
+  if (!state.connected || key.endsWith("|")) return Promise.resolve({ skipped: true });
+  if (firmwareRefreshPromise && firmwareRefreshKey === key) return firmwareRefreshPromise;
+  firmwareRefreshKey = key;
+  renderDriverFirmware(state.firmwareDrivers || "", state.firmwareError || "");
+  firmwareRefreshPromise = refreshFirmwareData(key).finally(() => {
+    if (firmwareRefreshKey === key) {
+      firmwareRefreshPromise = null;
+      firmwareRefreshKey = "";
+    }
+  });
+  return firmwareRefreshPromise;
+}
+
+// config.yaml arrives asynchronously after connect; re-render the firmware
+// table once roles/addresses are available without refetching the CAN report.
+subscribe(() => {
+  if (state.driverLayout) renderDriverFirmware(state.firmwareDrivers || "", state.firmwareError || "");
+});
+
 // Fast path: firmware version + machine state (two device commands).  The
 // connect flow only waits for this, so "连接" resolves in a few hundred ms
 // even when the CAN bus is slow.
+export function resetOverviewPanels() {
+  kv($("fwBox"), [["状态", "等待连接"]]);
+  kv($("stateBox"), [["状态", "等待连接"]]);
+  const details = $("fwDetailBox");
+  if (details) details.innerHTML = '<span class="muted">连接后读取</span>';
+  const raw = $("fwRaw");
+  if (raw) raw.textContent = "--";
+  const drivers = $("driverTable");
+  if (drivers) drivers.innerHTML = '<tr><td colspan="10" class="muted">等待连接</td></tr>';
+  const fwDrivers = $("fwDriverTable");
+  if (fwDrivers) fwDrivers.innerHTML = '<tr><td colspan="6" class="muted">等待连接</td></tr>';
+  kv($("canBox"), [["状态", "等待连接"]]);
+  kv($("drvBox"), [["状态", "等待连接"]]);
+  const stamp = $("lastUpdate");
+  if (stamp) {
+    stamp.textContent = "--";
+    stamp.className = "pill";
+  }
+}
 export async function refreshStatus() {
   const started = Date.now();
+  const linkKey = currentLinkKey();
   const status = await getStatus();
+  // A reconnect while the status request was in flight must not repaint the
+  // new device with the old device's state.  Compare the CURRENT link key, not
+  // the response base: the backend captured its base before the switch.
+  if (currentLinkKey() !== linkKey) return { stale: true };
   const build = asText(status.build);
   const state = asText(status.state);
   const errors = [];
@@ -62,6 +204,7 @@ export async function refreshStatus() {
   // A 200 response can still carry per-command errors; do not report a synced
   // connection when the device did not answer.
   if (!build && !state) {
+    if (currentLinkKey() !== linkKey) return { stale: true };
     const reason = errors[0] || "设备无响应";
     kv($("fwBox"), [
       ["状态", "读取失败"],
@@ -78,6 +221,7 @@ export async function refreshStatus() {
     ["链路", isSerial() ? "串口" : "WiFi"],
     ["设备", status.base || "--"],
   ]);
+  renderBoardFirmware(build);
   kv($("stateBox"), [
     ["状态", parts.name],
     ["MPos", parts.mpos],
@@ -85,6 +229,7 @@ export async function refreshStatus() {
   ]);
   patch({
     build,
+    buildSource: status.base || "",
     status: asText(status.state),
     base: status.base || "",
     connected: true,
@@ -106,8 +251,10 @@ export async function refreshCanData(light = true) {
     stamp.className = "pill warn2";
   }
   const started = Date.now();
+  const linkKey = currentLinkKey();
   try {
     const can = await getCan(light);
+    if (currentLinkKey() !== linkKey) return { stale: true };
     renderCanView(can, { raw: !light });
     renderDrivers(can);
     const failed = ["status", "faults", "positions", "drivers"].filter((key) => {
