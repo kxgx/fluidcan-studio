@@ -13,7 +13,7 @@ const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]);
 for (const id of ids) {
   assert.equal(ids.filter((x) => x === id).length, 1, `duplicate id ${id}`);
 }
-for (const id of ["dualYBox", "dualYMsg", "driverTable", "view-can", "dpadEnable", "dpadPlane", "dpadWasd", "dpadFieldset", "dpadPad", "virtualStick", "stickKnob", "dpadStatus", "gamepadStatus"]) {
+for (const id of ["dualYBox", "dualYMsg", "driverTable", "view-can", "dpadEnable", "dpadPlane", "dpadWasd", "dpadFeed", "dpadFeedValue", "dpadFieldset", "dpadPad", "virtualStick", "stickKnob", "dpadStatus", "gamepadStatus"]) {
   assert.ok(ids.includes(id), `missing id ${id}`);
 }
 
@@ -178,7 +178,18 @@ assert.ok(
   dpadView.includes("keyboardDirection") && (dpadView.includes("gamepadDirection") || (dpadView.includes("gamepadButtonDirection") && dpadView.includes("gamepadStickDirection"))) && dpadView.includes("stickDirection"),
   "direction input sources missing",
 );
-assert.ok(dpadView.includes("$J") || dpadView.includes("directionToJog"), "direction controls must use one-shot jog commands");
+assert.ok(dpadView.includes("$J") || dpadView.includes("directionToJog"), "direction controls must build jog commands");
+assert.ok(dpadView.includes("jogStart") && dpadView.includes("jogStop"), "continuous jog must use start/stop endpoints");
+assert.ok(app.includes("stopDirectionJog"), "leaving the control view must cancel continuous jog");
+const libJog = fs.readFileSync(path.join(root, "src/lib.rs"), "utf8");
+assert.ok(libJog.includes('route("/jog/start"') && libJog.includes('route("/jog/stop"'), "backend jog endpoints missing");
+assert.ok(libJog.includes("0x85"), "backend must send JogCancel 0x85");
+assert.ok(dpadView.includes("keydown") && dpadView.includes("keyup"), "keyboard press/release handlers missing");
+assert.ok(dpadView.includes("pointerup") && dpadView.includes("pointercancel"), "pointer stop handlers missing");
+assert.ok(dpadView.includes('addEventListener("blur"'), "blur stop handler missing");
+assert.ok(dpadView.includes("visibilitychange") && dpadView.includes("pagehide"), "visibility/pagehide stop handlers missing");
+assert.ok(dpadView.includes("document.hasFocus") && dpadView.includes("resetGamepadHold"), "gamepad focus guard missing");
+assert.ok(dpadView.includes("rearmTimer") && dpadView.includes("stopPending"), "rearm/stop retry state missing");
 assert.ok(html.includes('id="dpadFieldset" class="dpad-fieldset" disabled'), "direction controls must start disabled");
 assert.ok(app.includes("config.yaml：解析到"), "driver layout load must be logged");
 assert.ok(app.includes("applyAxisOptions"), "jog axis options must come from config.yaml");

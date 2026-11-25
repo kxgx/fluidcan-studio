@@ -1,7 +1,7 @@
 
 use std::{
     io::{Read, Write},
-    net::{IpAddr, Ipv4Addr, UdpSocket},
+    net::{IpAddr, Ipv4Addr, TcpStream, ToSocketAddrs, UdpSocket},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -94,6 +94,7 @@ struct AppState {
     serial_log: Arc<Mutex<Vec<String>>>,
     serial_exec_lock: Arc<tokio::sync::Mutex<()>>,
     tool_lock: Arc<tokio::sync::Mutex<()>>,
+    live: Arc<Mutex<Option<TcpStream>>>,
     web_token: Option<String>,
 }
 
@@ -127,6 +128,17 @@ struct SerialOpenReq {
 #[derive(Deserialize)]
 struct SerialSendReq {
     command: String,
+}
+
+#[derive(Deserialize)]
+struct JogStartReq {
+    command: String,
+    mode: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct JogStopReq {
+    mode: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -266,6 +278,7 @@ async fn connect(State(st): State<Arc<AppState>>, Json(req): Json<ConnectReq>) -
     match probe {
         Ok(text) => {
             *st.base.write().await = requested.clone();
+            *st.live.lock().unwrap() = None;
             Json(json!({
                 "base": requested,
                 "requested": requested,
@@ -477,6 +490,103 @@ async fn serial_send(
         .unwrap()
         .push(format!("> {}", req.command.trim()));
     Ok(Json(json!({"ok": true, "sent": req.command})))
+}
+
+fn device_is_serial(st: &AppState) -> bool {
+    st.serial.lock().unwrap().port.is_some()
+}
+
+fn connect_live(host: &str) -> Result<TcpStream, String> {
+    let addr = format!("{host}:23");
+    let socket = addr
+        .to_socket_addrs()
+        .map_err(|e| format!("解析设备地址失败: {e}"))?
+        .next()
+        .ok_or_else(|| "设备地址为空".to_string())?;
+    let stream = TcpStream::connect_timeout(&socket, Duration::from_secs(3))
+        .map_err(|e| format!("连接设备实时通道失败: {e}"))?;
+    stream.set_write_timeout(Some(Duration::from_secs(3))).ok();
+    stream.set_nodelay(true).ok();
+    Ok(stream)
+}
+
+async fn send_device_live(
+    st: &AppState,
+    bytes: &[u8],
+    label: &str,
+    mode: Option<&str>,
+) -> Result<(), String> {
+    let use_serial = match mode {
+        Some("serial") => true,
+        Some("http") => false,
+        _ => device_is_serial(st),
+    };
+    if use_serial {
+        if !device_is_serial(st) {
+            return Err("要求串口链路，但串口未打开".to_string());
+        }
+        let mut serial = st.serial.lock().unwrap();
+        let port = serial.port.as_mut().ok_or_else(|| "串口未打开".to_string())?;
+        port.write_all(bytes)
+            .map_err(|e| format!("串口写入失败: {e}"))?;
+        port.flush().ok();
+    } else {
+        let base = st.base.read().await.clone();
+        let host = reqwest::Url::parse(&base)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_string))
+            .unwrap_or_default();
+        if host.is_empty() {
+            return Err("设备未连接或地址无效".to_string());
+        }
+        let mut guard = st.live.lock().unwrap();
+        if guard.is_none() {
+            *guard = Some(connect_live(&host)?);
+        }
+        let mut stream = guard.take().ok_or_else(|| "实时通道未建立".to_string())?;
+        if stream.write_all(bytes).is_err() {
+            // Reconnect once if the device closed the idle keep-alive socket.
+            stream = connect_live(&host)?;
+            stream
+                .write_all(bytes)
+                .map_err(|e| format!("实时通道写入失败: {e}"))?;
+        }
+        stream.flush().ok();
+        *guard = Some(stream);
+    }
+    st.serial_log.lock().unwrap().push(label.to_string());
+    Ok(())
+}
+
+async fn jog_start(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<JogStartReq>,
+) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
+    let command = req.command.trim().to_string();
+    if !command.starts_with("$J=") || command.contains('\n') || command.contains('\r') {
+        return Err(err("连续点动命令格式无效"));
+    }
+    let mut line = command.into_bytes();
+    line.push(b'\n');
+    send_device_live(
+        &st,
+        &line,
+        "> continuous jog start",
+        req.mode.as_deref(),
+    )
+    .await
+    .map_err(|e| (StatusCode::BAD_GATEWAY, Json(ApiError { error: e })))?;
+    Ok(Json(json!({"ok": true})))
+}
+
+async fn jog_stop(
+    State(st): State<Arc<AppState>>,
+    Json(req): Json<JogStopReq>,
+) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
+    send_device_live(&st, &[0x85], "> jog cancel 0x85", req.mode.as_deref())
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, Json(ApiError { error: e })))?;
+    Ok(Json(json!({"ok": true})))
 }
 
 async fn serial_exec(
@@ -1914,6 +2024,7 @@ fn build_state(web_token: Option<String>) -> Arc<AppState> {
         serial_log: Arc::new(Mutex::new(Vec::new())),
         serial_exec_lock: Arc::new(tokio::sync::Mutex::new(())),
         tool_lock: Arc::new(tokio::sync::Mutex::new(())),
+        live: Arc::new(Mutex::new(None)),
         web_token,
     })
 }
@@ -1959,6 +2070,8 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/ports", get(list_ports))
         .route("/serial/open", post(serial_open))
         .route("/serial/send", post(serial_send))
+        .route("/jog/start", post(jog_start))
+        .route("/jog/stop", post(jog_stop))
         .route("/serial/exec", post(serial_exec))
         .route("/serial/log", get(serial_log))
         .route("/install/ota", post(ota_update))

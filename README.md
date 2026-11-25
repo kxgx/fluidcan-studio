@@ -6,7 +6,7 @@ Rust + Tauri 的 FluidNC CAN 调试、控制、配置与固件安装工具，面
 
 ![桌面 GUI](docs/gui.png)
 
-当前版本：`studio-v0.4.4`
+当前版本：`studio-v0.4.5`
 
 ## 功能
 
@@ -17,7 +17,7 @@ Rust + Tauri 的 FluidNC CAN 调试、控制、配置与固件安装工具，面
 - CAN：`$CANStatus`、`$CANFaults`、`$CANPos`、`$CANDriverInfo`、`$CANScan`、`$CANAutoConfig`、`$CANReset`、`$CANLog`
 - CAN 配置面板：只读解析 config.yaml，按 can.driver 和每轴 motorN 的 pd42s1/zdt/canopen 块显示地址、协议字段、方向、速度/加速度/更新周期；警告协议混用、地址重复和方向不一致
 - 运动控制：点动、回零、解锁、使能/失能、工作坐标清零（G10 L20 P1）和驱动零位（$CANZero，按驱动协议清位置基准后自动坐标零）、任意命令；轴列表和 $CANZero 地址由 config.yaml 生成
-- **方向键 / 手柄控制**：默认关闭的虚拟 D-pad、键盘方向键（可选 WASD）、标准 Gamepad API 物理手柄和虚拟摇杆；统一发送一次性 `$J` 点动，支持 XY/XZ/YZ 平面、手柄 D-pad/左摇杆和死区；每次方向输入只发送一个步距，不重复排队
+- **方向键 / 手柄连续控制**：默认关闭的虚拟 D-pad、键盘方向键（可选 WASD）、标准 Gamepad API 物理手柄和虚拟摇杆；按住连续移动、松开立即 JogCancel，速度滑杆 100–3000 mm/min，支持 XY/XZ/YZ 平面和摇杆死区
 - **限位开关测试（只读）**：轮询 `?` 状态中的 `Pn:` 触发位，配合 config.yaml 里的 limit_all/neg/pos 引脚显示各轴触发/释放，不会自动移动电机
 - 配置：读取/编辑/上传 `config.yaml`，上传前 YAML 语法检查
 - 远程仓库 OTA：从 GitHub Releases 读取 `can-vX.Y.Z`，固件安装页只让用户选择 WiFi / NoWiFi，Flash/PSRAM 由设备 `$I` 自动识别并选择对应结构化 zip；`can-v0.2.16+` 自动提取 `OTA/firmware.bin`；GitHub API 限流时回退 `releases.atom`
@@ -172,8 +172,8 @@ dist/FluidCAN-Studio-android-arm64.apk
 触发：
 
 ```powershell
-git tag studio-v0.4.4
-git push origin studio-v0.4.4
+git tag studio-v0.4.5
+git push origin studio-v0.4.5
 ```
 
 依赖的 Actions 使用当前最新大版本，包括：
@@ -347,12 +347,14 @@ GET /api/scan
 
 运动控制页的方向控制默认关闭，勾选“启用方向控制”后才生效；设备未连接时只显示等待，不会发送命令。
 
-- 虚拟 D-pad：屏幕方向按钮，每次按下发送一个步距的点动。
-- 键盘：方向键；可选 WASD。输入框/文本域/下拉框获得焦点时不拦截。
-- 物理手柄：标准 Gamepad API（仅 standard mapping），支持 D-pad 按钮和左摇杆，带死区。
-- 虚拟手柄：屏幕摇杆，拖动产生方向，每次方向变化发送一个步距。
-- 平面：XY / XZ / YZ；步距和进给沿用运动控制页的点动参数。
-- 所有来源统一发送 `$J=G21G91...` 一次性点动；不会自动重复产生新命令、回零或使能。每次方向输入只发一个步距，已接受的 jog 会按控制器队列执行完；默认关闭且在未连接时不发送。
+连续控制使用短段 `$J` + FluidNC 实时 `0x85` JogCancel：按下开始，松开/失焦/切页立即取消；速度由方向控制卡的滑杆选择（100–3000 mm/min）。每段 jog 限制为 XY 25 mm / Z 5 mm，持续按住自动续接；网络断线时设备最多跑完当前短段。HTTP 模式经后端常驻 Telnet 实时通道（设备 23 端口）发送，串口模式直接写串口。
+
+- 虚拟 D-pad：按住连续移动，松开 JogCancel。
+- 键盘：方向键；可选 WASD。按住连续移动，松开停止；输入框获得焦点时不拦截。
+- 物理手柄：标准 Gamepad API（仅 standard mapping），D-pad 按下/摇杆方向持续移动，回中停止。
+- 虚拟手柄：屏幕摇杆，拖动持续移动，松手停止。
+- 平面：XY / XZ / YZ；速度使用方向控制卡自己的滑杆，不再沿用单步点动参数。
+- 所有来源统一使用 `$J=G21G91...` 短段 jog（XY 25 mm / Z 5 mm 上限），停止发送实时 `0x85` JogCancel；持续按住自动续接，不会自动回零或使能。默认关闭且在未连接时不发送。
 
 ## 限位开关测试（只读）
 

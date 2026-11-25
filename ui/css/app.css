@@ -42,3 +42,5 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
 @media(max-width:600px){.dpad{width:132px;height:132px}.virtual-stick{width:112px;height:112px}.stick-knob{width:40px;height:40px;margin:-20px 0 0 -20px}}
 
 .dpad,.dpad-btn{touch-action:none}
+
+#dpadFeedValue{display:inline-block;min-width:92px;font-variant-numeric:tabular-nums}

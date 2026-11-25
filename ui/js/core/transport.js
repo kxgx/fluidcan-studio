@@ -68,6 +68,22 @@ export async function ports() {
   return api("/ports");
 }
 
+// Continuous jog: start one long $J command, stop with the FluidNC realtime
+// JogCancel byte (0x85).  The UI sends its current mode explicitly.
+export async function jogStart(command) {
+  return api("/jog/start", {
+    method: "POST",
+    body: JSON.stringify({ command, mode }),
+  });
+}
+
+export async function jogStop() {
+  return api("/jog/stop", {
+    method: "POST",
+    body: JSON.stringify({ mode }),
+  });
+}
+
 // Execute one FluidNC console command through the active transport.
 export async function exec(command) {
   if (mode === "serial") {

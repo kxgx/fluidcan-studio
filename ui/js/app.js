@@ -10,7 +10,7 @@ import { resolveConnectTarget, scanMessage, scannedAddress } from "./core/sessio
 import { parseConfigMap } from "./core/yconfig.js";
 import { parseDriverLayout } from "./core/drivers.js";
 import { readLimitsOnce, stopLimitTest, toggleLimitTest } from "./views/limits.js";
-import { initDirectionControls } from "./views/dpad.js";
+import { initDirectionControls, stopDirectionJog } from "./views/dpad.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -123,8 +123,11 @@ function showView(name) {
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
   const view = $("view-" + name);
   if (view) view.classList.add("active");
-  // The limit test polls the controller; stop it when leaving the motion view.
-  if (name !== "control") stopLimitTest();
+  // The limit test polls and continuous jog must stop when leaving motion.
+  if (name !== "control") {
+    stopLimitTest();
+    stopDirectionJog();
+  }
 }
 
 // Discovery flow: only fills the scan picker (and the address input when
