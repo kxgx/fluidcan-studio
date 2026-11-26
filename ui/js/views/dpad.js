@@ -268,13 +268,13 @@ function stopContinuous(reason = "松开", owner = null) {
   return serialized(() => doStopContinuous(reason, owner));
 }
 
-export function stopDirectionJog() {
+export async function stopDirectionJog() {
   heldKeys.clear();
   virtualDirection = null;
   virtualStickPointer = null;
   analogStickDirection = null;
   resetGamepadHold();
-  void stopContinuous("离开控制页");
+  await stopContinuous("离开控制页");
 }
 
 function setEnabled(next) {

@@ -130,7 +130,11 @@ assert.ok(configView.includes("typeof j.yaml === \"string\""), "config load must
 assert.ok(configView.includes("已拒绝上传"), "config save must refuse an empty/garbage editor");
 // B09R: the editor starts empty with a placeholder; upload requires a successful read.
 assert.ok(configView.includes("configLoaded"), "config save must require a successful read first");
-assert.ok(configView.includes("请先“读取配置”"), "config save must reject without a successful read");
+assert.ok(configView.includes("请先在当前设备读取配置"), "config save must reject without a successful read");
+assert.ok(configView.includes("configLoadedFor"), "config save must be bound to the link that read it");
+assert.ok(app.includes("resetConfigState"), "link switch must clear the config editor");
+assert.ok(html.includes("closeSerial"), "UI must expose a serial close button");
+assert.ok(app.includes("closeSerial"), "UI must close serial before switching links");
 assert.ok(app.includes('replace(/^Error:\\s*/, "")'), "run() must strip the Error: prefix from user-facing messages");
 const runBody = functionBody(app, "run");
 assert.ok(runBody.includes('log(message, "err")'), "run() must log the prefix-free message");

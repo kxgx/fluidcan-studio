@@ -6,7 +6,7 @@ Rust + Tauri 的 FluidNC CAN 调试、控制、配置与固件安装工具，面
 
 ![桌面 GUI](docs/gui.png)
 
-当前版本：`studio-v0.4.6`
+当前版本：`studio-v0.4.7`
 
 ## 功能
 
@@ -101,6 +101,7 @@ $env:FLUIDCAN_MODE="web"
 - 启动 URL 和 token 同时写入：
   `%TEMP%\fluidcan-studio.log`
 - Linux 无 `DISPLAY` / `WAYLAND_DISPLAY` 时自动进入 Web 模式
+- `--web` 当前是**单客户端**设计：多个标签页/客户端共享同一个设备目标（HTTP base、串口和 OTA 目标），不要同时操作多台设备
 
 开放到公网时请加防火墙、VPN 或反向代理；内置 token 只做基础访问保护。
 
@@ -174,8 +175,8 @@ dist/FluidCAN-Studio-android-arm64.apk
 触发：
 
 ```powershell
-git tag studio-v0.4.6
-git push origin studio-v0.4.6
+git tag studio-v0.4.7
+git push origin studio-v0.4.7
 ```
 
 依赖的 Actions 使用当前最新大版本，包括：

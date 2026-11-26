@@ -20,6 +20,7 @@
   <select id="serialPorts" style="width:150px" title="独立串口链路"><option value="">串口...</option></select>
   <button onclick="refreshPorts()">刷新</button>
   <button id="openSerialBtn" onclick="openSerial()" title="打开串口">打开串口</button>
+  <button onclick="closeSerial()" title="关闭串口并释放 COM 口">关闭串口</button>
   <span id="connPill" class="pill">未连接</span>
   <span class="grow"></span>
   <span id="appVersion" class="pill" title="Studio 版本">--</span>

@@ -3,7 +3,7 @@ import { patch, state } from "./core/store.js";
 import { refreshStatus, refreshCanData, refreshFirmwareInBackground, resetOverviewPanels } from "./views/overview.js";
 import { runCanCommand } from "./views/can.js";
 import { clearLog, jog, log, sendCommand, sendConsole, sendQuick, zeroAll, zeroAxis, zeroDriverAll, zeroDriverAxis } from "./views/control.js";
-import { loadConfig, saveConfig } from "./views/config.js";
+import { loadConfig, resetConfigState, saveConfig } from "./views/config.js";
 import * as install from "./views/install.js";
 import { loadCanConfig, openConfigEditor } from "./views/dual-y.js";
 import { resolveConnectTarget, scanMessage, scannedAddress } from "./core/session.js";
@@ -58,6 +58,7 @@ function resetDeviceState() {
     driverLayout: null,
     drivers: [],
   });
+  resetConfigState();
   resetOverviewPanels();
 }
 
@@ -232,6 +233,9 @@ async function scanDevices() {
 // With neither it explains what to do and returns; it never falls back to a
 // scan, so the two buttons stay independent.
 async function connectDevice() {
+  // A held direction button must not keep moving the current device while the
+  // operator is switching links.
+  await stopDirectionJog();
   if (connectBusy) {
     log("连接处理中", "err");
     return;
@@ -255,10 +259,14 @@ async function connectDevice() {
     const j = await transport.connectHttp(target.url);
     if (!j.connected) {
       const reason = j.probe || j.error || "设备无响应";
-      setConn(false, "连接失败");
-      log(`连接失败 ${j.requested || target.url}（${((Date.now() - started) / 1000).toFixed(1)}s）: ${reason}`, "err");
-      const active = transport.currentHttpBase();
-      if (active) log(`当前仍保持原有设备连接 ${active}（切换失败，后端未换地址）`, "err");
+      const active = transport.currentMode() === "http" ? transport.currentHttpBase() : "";
+      if (active) {
+        setConn(true, "已连接 " + active);
+        log(`切换失败，仍连接 ${active}: ${reason}`, "err");
+      } else {
+        setConn(false, "连接失败");
+        log(`连接失败 ${j.requested || target.url}: ${reason}`, "err");
+      }
       if (canRefreshPromise) log("提示：CAN 数据正在后台读取，设备可能忙于响应；稍等后重试连接", "err");
       return;
     }
@@ -289,12 +297,34 @@ async function connectDevice() {
         refreshCanInBackground("连接后").finally(() => void refreshFirmwareInBackground());
       });
   } catch (e) {
-    setConn(false, "连接失败");
-    log(String(e), "err");
+    const active = transport.currentMode() === "http" ? transport.currentHttpBase() : "";
+    if (active) {
+      setConn(true, "已连接 " + active);
+      log("切换失败，仍连接 " + active + ": " + e, "err");
+    } else {
+      setConn(false, "连接失败");
+      log(String(e), "err");
+    }
   } finally {
     connectBusy = false;
     setBusyButton("connectBtn", false, "连接", "连接中...");
   }
+}
+
+async function closeSerial() {
+  await stopDirectionJog();
+  const wasSerial = transport.currentMode() === "serial";
+  try {
+    await transport.closeSerial();
+    log("串口已关闭", "ok");
+  } catch (e) {
+    log("关闭串口失败: " + e, "err");
+    return;
+  }
+  if (!wasSerial) return;
+  stopSerialPoll();
+  setConn(false, "未连接");
+  resetDeviceState();
 }
 
 let portsRefreshPromise = null;
@@ -330,6 +360,7 @@ async function refreshPortsOnce() {
 // Serial flow: its own link.  It must not scan or connect over HTTP, and a
 // failed open must not touch the WiFi connection state.
 async function openSerial() {
+  await stopDirectionJog();
   if (serialBusy) {
     log("串口正在打开中，请等待", "err");
     return;
@@ -371,8 +402,14 @@ async function openSerial() {
 
 let serialTimer = null;
 let serialLast = 0;
+function stopSerialPoll() {
+  if (serialTimer) {
+    clearInterval(serialTimer);
+    serialTimer = null;
+  }
+}
 function startSerialPoll() {
-  if (serialTimer) clearInterval(serialTimer);
+  stopSerialPoll();
   serialLast = 0;
   serialTimer = setInterval(async () => {
     try {
@@ -530,6 +567,7 @@ Object.assign(window, {
   scanDevices,
   refreshPorts,
   openSerial,
+  closeSerial,
   showView,
   refreshAll,
   refreshCan,

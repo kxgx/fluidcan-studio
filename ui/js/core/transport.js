@@ -56,6 +56,15 @@ export async function openSerial(port, baud = 115200) {
   return j;
 }
 
+export async function closeSerial() {
+  const j = await api("/serial/close", { method: "POST" });
+  if (mode === "serial") {
+    mode = "none";
+    serialName = "";
+  }
+  return j;
+}
+
 export async function scan() {
   return api("/scan");
 }

@@ -4,7 +4,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, TcpStream, ToSocketAddrs, UdpSocket},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
     time::Duration,
@@ -98,6 +98,8 @@ struct AppState {
     jog_max_feed: Arc<tokio::sync::RwLock<u16>>,
     serial: Arc<Mutex<SerialState>>,
     serial_log: Arc<Mutex<Vec<String>>>,
+    serial_reader: Arc<Mutex<Option<SerialReader>>>,
+    serial_io_lock: Arc<tokio::sync::Mutex<()>>,
     serial_exec_lock: Arc<tokio::sync::Mutex<()>>,
     tool_lock: Arc<tokio::sync::Mutex<()>>,
     live: Arc<Mutex<Option<TcpStream>>>,
@@ -108,6 +110,11 @@ struct AppState {
 struct SerialState {
     port: Option<Box<dyn serialport::SerialPort>>,
     name: String,
+}
+
+struct SerialReader {
+    cancel: Arc<AtomicBool>,
+    handle: std::thread::JoinHandle<()>,
 }
 
 #[derive(Deserialize)]
@@ -123,6 +130,7 @@ struct CommandReq {
 #[derive(Deserialize)]
 struct ConfigReq {
     yaml: String,
+    expected_base: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -506,6 +514,11 @@ async fn put_config(
         return Err(err(format!("YAML 语法错误，未上传: {e}")));
     }
     let base = current_base(&st).await;
+    if let Some(expected) = req.expected_base.as_deref() {
+        if expected != base {
+            return Err(err("设备已切换，配置上传已取消；请重新读取配置"));
+        }
+    }
     let resp = st
         .client
         .put(format!("{base}/flash/config.yaml"))
@@ -536,17 +549,35 @@ async fn list_ports() -> Json<Value> {
     Json(json!({ "ports": ports }))
 }
 
+fn close_serial_port(st: &AppState) {
+    // Take the reader control and release the mutex before joining: the reader
+    // thread only exits after it has seen the cancel flag, and joining while
+    // holding this lock would make a concurrent close/open deadlock.
+    let reader = st.serial_reader.lock().unwrap().take();
+    if let Some(reader) = &reader {
+        reader.cancel.store(true, Ordering::Release);
+    }
+    {
+        let mut s = st.serial.lock().unwrap();
+        s.port = None;
+        s.name.clear();
+    }
+    // The reader thread owns a duplicated handle.  Its 100 ms read timeout
+    // wakes it periodically so the cancel flag is observed promptly; join
+    // outside all mutexes so the COM port is actually released before a new
+    // open, esptool or Web Serial attempt.
+    if let Some(reader) = reader {
+        let _ = reader.handle.join();
+    }
+}
+
 async fn serial_open(
     State(st): State<Arc<AppState>>,
     Json(req): Json<SerialOpenReq>,
 ) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
     let baud = req.baud.unwrap_or(115200);
-    // Drop any previous port first so Windows does not keep the COM handle
-    // locked when the user re-opens the same port.
-    {
-        let mut s = st.serial.lock().unwrap();
-        s.port = None;
-    }
+    let _io = st.serial_io_lock.lock().await;
+    close_serial_port(&st);
     let port = serialport::new(&req.port, baud)
         .timeout(Duration::from_millis(100))
         .open()
@@ -564,10 +595,12 @@ async fn serial_open(
         .unwrap()
         .push(format!("[serial] open {} @{}", req.port, baud));
     let log = st.serial_log.clone();
-    std::thread::spawn(move || {
+    let cancel = Arc::new(AtomicBool::new(false));
+    let reader_cancel = cancel.clone();
+    let reader_handle = std::thread::spawn(move || {
         let mut buf = [0u8; 1024];
         let mut line = Vec::new();
-        loop {
+        while !reader_cancel.load(Ordering::Acquire) {
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
@@ -591,6 +624,7 @@ async fn serial_open(
         }
         log.lock().unwrap().push("[serial] closed".to_string());
     });
+    *st.serial_reader.lock().unwrap() = Some(SerialReader { cancel, handle: reader_handle });
     Ok(Json(json!({"ok": true, "port": req.port, "baud": baud})))
 }
 
@@ -609,6 +643,13 @@ async fn serial_send(
         .unwrap()
         .push(format!("> {}", req.command.trim()));
     Ok(Json(json!({"ok": true, "sent": req.command})))
+}
+
+async fn serial_close(State(st): State<Arc<AppState>>) -> Json<Value> {
+    let _io = st.serial_io_lock.lock().await;
+    close_serial_port(&st);
+    st.serial_log.lock().unwrap().push("[serial] close".to_string());
+    Json(json!({"ok": true}))
 }
 
 fn device_is_serial(st: &AppState) -> bool {
@@ -2153,6 +2194,8 @@ fn build_state(web_token: Option<String>) -> Arc<AppState> {
         jog_max_feed: Arc::new(tokio::sync::RwLock::new(load_jog_max_feed())),
         serial: Arc::new(Mutex::new(SerialState::default())),
         serial_log: Arc::new(Mutex::new(Vec::new())),
+        serial_reader: Arc::new(Mutex::new(None)),
+        serial_io_lock: Arc::new(tokio::sync::Mutex::new(())),
         serial_exec_lock: Arc::new(tokio::sync::Mutex::new(())),
         tool_lock: Arc::new(tokio::sync::Mutex::new(())),
         live: Arc::new(Mutex::new(None)),
@@ -2202,6 +2245,7 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/config", get(get_config).put(put_config))
         .route("/ports", get(list_ports))
         .route("/serial/open", post(serial_open))
+        .route("/serial/close", post(serial_close))
         .route("/serial/send", post(serial_send))
         .route("/jog/start", post(jog_start))
         .route("/jog/stop", post(jog_stop))
