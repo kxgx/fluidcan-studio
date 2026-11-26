@@ -8,7 +8,6 @@ import {
   driverMetaMap,
   parseDriverLayout,
   parseLimitSwitches,
-  roleMap,
 } from "../ui/js/core/drivers.js";
 
 function axesYaml(count, protocol = "pd42s1") {
@@ -58,7 +57,6 @@ assert.deepEqual(
     [4, "Z", "pd42s1"],
   ],
 );
-assert.deepEqual(roleMap(layout), { 1: "X", 2: "Y0", 3: "Y1", 4: "Z" });
 assert.deepEqual(driverMetaMap(layout)[2], { role: "Y0", axis: "Y", protocol: "pd42s1", protocolLabel: "PD42S1" });
 assert.deepEqual(addressesForAxis(layout, "y"), [2, 3]);
 assert.deepEqual(addressesForAxis(layout, " x "), [1]);

@@ -83,7 +83,7 @@ export function renderCanConfig(cfg) {
           ${row("位置回读", can.driver === "zdt" ? "36 / $CANPos" : "--")}
           ${row("故障/使能回读", can.driver === "zdt" ? "ZDT 未实现" : "按驱动能力")}
           ${row("驱动零位", can.driver === "zdt" ? "$CANZero (0A)" : "$CANZero")}
-          ${row("说明", "字段来自 config.yaml；只读，不修改配置")}
+          ${row("说明", "只读")}
         </div>
       </div>
     </div>
@@ -102,8 +102,8 @@ export async function loadCanConfig() {
   const box = $("dualYBox");
   if (!box) return;
   if (isSerial()) {
-    if (msg) msg.textContent = "串口模式下请先在配置页查看原文";
-    if (box) box.innerHTML = '<span class="muted">串口模式不能读取 /api/config</span>';
+    if (msg) msg.textContent = "串口模式：请在配置页查看";
+    if (box) box.innerHTML = '<span class="muted">串口模式不可读 /api/config</span>';
     return;
   }
   if (msg) msg.textContent = "读取中...";

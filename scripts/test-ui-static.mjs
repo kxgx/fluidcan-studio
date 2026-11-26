@@ -87,7 +87,7 @@ assert.ok(serialBody.includes("transport.openSerial"), "openSerial must use the 
 assert.ok(bootBody.includes("setTimeout(scanDevices"), "startup should auto-scan once");
 assert.ok(!bootBody.includes("connectDevice("), "startup must not auto-connect");
 assert.ok(app.includes('"scanResults")?.addEventListener'), "scan result picker change handler missing");
-assert.ok(app.includes("本次扫描结束"), "scan button must guard re-entrant scans");
+assert.ok(app.includes("扫描进行中"), "scan button must guard re-entrant scans");
 
 // ---- Latency: fast status path, slow CAN path runs in the background -------
 const overview = fs.readFileSync(path.join(root, "ui/js/views/overview.js"), "utf8");
@@ -179,7 +179,7 @@ assert.ok(html.includes('id="firmwareVariant"') && html.includes('value="wifi"')
 assert.ok(!html.includes("quad-oled-usb") && !html.includes("nopsram-oled-usb-4mb"), "old USB/OLED variant labels must not be exposed");
 const dpadView = fs.readFileSync(path.join(root, "ui/js/views/dpad.js"), "utf8");
 assert.ok(
-  dpadView.includes("keyboardDirection") && (dpadView.includes("gamepadDirection") || (dpadView.includes("gamepadButtonDirection") && dpadView.includes("gamepadStickDirection"))) && dpadView.includes("stickDirection"),
+  dpadView.includes("keyboardDirection") && (dpadView.includes("gamepadButtonDirection") && dpadView.includes("gamepadStickDirection")) && dpadView.includes("stickDirection"),
   "direction input sources missing",
 );
 assert.ok(dpadView.includes("$J") || dpadView.includes("directionToJog"), "direction controls must build jog commands");
@@ -195,7 +195,7 @@ assert.ok(dpadView.includes("visibilitychange") && dpadView.includes("pagehide")
 assert.ok(dpadView.includes("document.hasFocus") && dpadView.includes("resetGamepadHold"), "gamepad focus guard missing");
 assert.ok(dpadView.includes("rearmTimer") && dpadView.includes("stopPending"), "rearm/stop retry state missing");
 assert.ok(html.includes('id="dpadFieldset" class="dpad-fieldset" disabled'), "direction controls must start disabled");
-assert.ok(app.includes("config.yaml：解析到"), "driver layout load must be logged");
+assert.ok(app.includes("config.yaml："), "driver layout load must be logged");
 assert.ok(app.includes("applyAxisOptions"), "jog axis options must come from config.yaml");
 assert.ok(!html.includes("地址2/3"), "motion view must not hard-code Y driver addresses");
 // Wi-Fi reads /api/config; the serial link reads the same YAML via $CD.
@@ -225,7 +225,7 @@ for (const id of [
 }
 const installView = fs.readFileSync(path.join(root, "ui/js/views/install.js"), "utf8");
 assert.ok(installView.includes("parseFirmwareHardware") && installView.includes("firmwareVariant"), "installer must auto-detect hardware and radio");
-assert.ok(installView.includes("NoWiFi 固件没有网络栈"), "NoWiFi must block network OTA");
+assert.ok(installView.includes("NoWiFi 无网络栈"), "NoWiFi must block network OTA");
 assert.ok(!installView.includes('$("webFlashVariant").value;'), "web flash must not use the radio-only selector as a full variant");
 const libSource = fs.readFileSync(path.join(root, "src/lib.rs"), "utf8");
 assert.ok(app.includes("prepareWebFlash"), "prepareWebFlash binding missing");
@@ -252,7 +252,7 @@ assert.ok(/\.layout\{[^}]*flex:1 1 auto;min-height:0/.test(css), "layout must fi
 assert.ok(/nav\{[^}]*overflow-y:auto/.test(css), "sidebar must scroll independently");
 assert.ok(/main\{[^}]*overflow-y:auto/.test(css), "main content must be the scroll container");
 assert.ok(css.includes(".layout{display:flex;flex-direction:column;min-height:0}"), "narrow layout must stack with scrollable main");
-assert.ok(installView.includes("firmware.factory.bin") && installView.includes("bootloader.bin"), "standard firmware names missing");
+assert.ok(installView.includes("firmware.factory.bin") && libSource.includes("bootloader.bin"), "standard firmware names missing");
 assert.ok(!html.includes('value="embedded"'), "embedded firmware source must be removed");
 assert.ok(!html.includes("内置固件"), "embedded firmware hint must be removed");
 assert.ok(libSource.includes("/install/flash-local"), "backend local esptool route missing");

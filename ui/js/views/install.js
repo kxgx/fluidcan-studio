@@ -100,25 +100,25 @@ export function updateVariantState() {
   if (button) button.disabled = !releasesLoaded || !hasVariant() || four || noWifi || !targetOk;
   if (!warn) return;
   if (!targetOk) {
-    warn.textContent = "网络 OTA 目标与当前硬件识别来源不一致：请先用 WiFi 连接目标设备并刷新版本，不要用串口读取的 build 给其他 HTTP 设备刷机。";
+    warn.textContent = "目标与硬件来源不一致：请用 WiFi 连接目标设备后刷新。";
     warn.className = "sub badtxt";
   } else if (!releasesLoaded) {
-    warn.textContent = "请先获取版本列表；连接设备后会自动识别硬件。";
+    warn.textContent = "请先获取版本。";
     warn.className = "sub";
   } else if (legacyNeedsConfirm() && !legacyConfirmed()) {
-    warn.textContent = "旧固件未报告 Flash/PSRAM：请确认硬件是 N16R8 / 16MB Octal；若是 4MB/8MB 板，请先用本地 USB 包刷入带硬件标记的 can-v0.2.26。";
+    warn.textContent = "旧固件无硬件标识：确认是 N16R8 / 16MB Octal；4MB/8MB 板请先 USB 刷入新固件。";
     warn.className = "sub warntxt";
   } else if (!hw) {
-    warn.textContent = "未识别硬件：请先连接设备并刷新版本，USB 烧录可直接选择固件。";
+    warn.textContent = "未识别硬件：请连接设备。";
     warn.className = "sub warntxt";
   } else if (noWifi) {
-    warn.textContent = `已识别 ${hardwareLabel()}：NoWiFi 固件没有网络栈，不能网络 OTA，请用 USB / Web Serial 烧录。`;
+    warn.textContent = `${hardwareLabel()}：NoWiFi 无网络栈，请用 USB。`;
     warn.className = "sub badtxt";
   } else if (four) {
-    warn.textContent = `已识别 ${hardwareLabel()}：4 MB 单 app 分区，不能网络 OTA，请用 USB / Web Serial 烧录。`;
+    warn.textContent = `${hardwareLabel()}：4MB 单 app，请用 USB。`;
     warn.className = "sub badtxt";
   } else {
-    warn.textContent = `已识别 ${hardwareLabel()}：自动选择 ${releaseVariant()}，支持网络 OTA。`;
+    warn.textContent = `${hardwareLabel()}：使用 ${releaseVariant()}。`;
     warn.className = "sub";
   }
 }
@@ -186,10 +186,10 @@ export async function refreshRemote() {
 
 export async function remoteOta() {
   if (!releasesLoaded) throw new Error("先获取版本列表");
-  if (!otaTargetMatches()) throw new Error("网络 OTA 目标与硬件识别来源不一致，请先用 WiFi 连接目标设备并刷新版本");
+  if (!otaTargetMatches()) throw new Error("目标与硬件来源不一致，请用 WiFi 刷新版本");
   if (!hasVariant()) throw new Error("未识别硬件，请先连接设备");
-  if (isNoWifi()) throw new Error("NoWiFi 固件没有网络栈，不能网络 OTA；请用 USB / Web Serial 烧录");
-  if (isFourMb()) throw new Error("4 MB 版本不能网络 OTA，请使用串口或 Web Serial 烧录 factory 镜像");
+  if (isNoWifi()) throw new Error("NoWiFi 无网络栈，请用 USB");
+  if (isFourMb()) throw new Error("4MB 版本请用串口烧录");
   const tag = $("remoteRelease").value;
   if (!tag) throw new Error("先获取并选择版本");
   const variant = releaseVariant();
@@ -201,7 +201,7 @@ export async function remoteOta() {
 }
 
 export async function otaUpload() {
-  if (!otaTargetMatches()) throw new Error("网络 OTA 目标与硬件识别来源不一致，请先用 WiFi 连接目标设备并刷新版本");
+  if (!otaTargetMatches()) throw new Error("目标与硬件来源不一致，请用 WiFi 刷新版本");
   const file = $("otaFile").files[0];
   if (!file) throw new Error("选择 .zip 固件包或 app .bin");
   const form = new FormData();
@@ -389,21 +389,21 @@ export function updateWebFlashState() {
   if (!webSerialSupported()) {
     hint.className = "sub badtxt";
     hint.textContent =
-      "当前浏览器不支持 Web Serial（需要 Chrome/Edge 且页面为 localhost/HTTPS）；可继续使用下方网络 OTA 或串口 esptool 烧录。";
+      "需要 Chrome/Edge + localhost/HTTPS。";
     return;
   }
   hint.className = "sub";
   if (source === "remote") {
     if (legacyBlocked) {
       hint.className = "sub badtxt";
-      hint.textContent = "旧固件没有硬件标识：请先在远程 OTA 卡勾选“按 N16R8 / 16MB Octal 继续”；4MB/8MB 板请先用本地 USB 包刷入新固件。";
+      hint.textContent = "旧固件无硬件标识：请勾选 N16R8 / 16MB Octal；4MB/8MB 板请先 USB。";
       return;
     }
     hint.textContent =
-      `远程来源自动选择 ${releaseVariant() || "（未识别硬件）"} 的 Release zip，并提取 USB/firmware.factory.bin；硬件来自设备 $I，USB 和 OLED 固定包含。`;
+      `自动选择 ${releaseVariant() || "未识别硬件"}；USB/OLED 固定包含。`;
   } else {
     hint.textContent =
-      "选择本地固件包（.zip 或单个 .bin）。标准文件名：firmware.factory.bin/factory.bin→0x0（整片）、bootloader.bin→0x0、partitions.bin→0x8000、boot_app0.bin→0xE000、firmware.bin/app.bin→0x10000。上传后可只勾选需要更新的分区（例如只更新 firmware.bin）。";
+      "选择 .zip 或 .bin；上传后勾选要烧录的分区。";
   }
 }
 
@@ -439,7 +439,7 @@ export async function prepareWebFlash() {
     if (source === "remote") {
       if (!releasesLoaded) await refreshRemote();
       if (legacyNeedsConfirm() && !legacyConfirmed()) {
-        throw new Error("旧固件硬件未确认：请在远程 OTA 卡勾选按 N16R8 / 16MB Octal 继续；4MB/8MB 板请先本地 USB 刷入新固件");
+        throw new Error("旧固件无硬件标识：请勾选 N16R8 / 16MB Octal；4MB/8MB 板请先 USB");
       }
       const tag = $("webFlashRelease").value;
       const selectedVariant = releaseVariant();

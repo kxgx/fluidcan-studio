@@ -36,10 +36,6 @@ export function currentHttpBase() {
   return httpBase;
 }
 
-export function setNone() {
-  mode = "none";
-}
-
 export async function connectHttp(url) {
   const j = await api("/connect", { method: "POST", body: JSON.stringify({ url }) });
   if (j.connected) {

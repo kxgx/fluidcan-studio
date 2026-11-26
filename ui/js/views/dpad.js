@@ -299,7 +299,7 @@ function setEnabled(next) {
     status("方向键未启用", "warn2");
   } else {
     startGamepadPoll();
-    status(state.connected ? "方向键已启用（按住连续移动）" : "等待连接设备", state.connected ? "ok" : "warn2");
+    status(state.connected ? "方向键已启用" : "等待连接设备", state.connected ? "ok" : "warn2");
   }
 }
 
@@ -625,7 +625,7 @@ export function initDirectionControls() {
       void stopContinuous("设备断开");
       if (enabled) status("设备未连接", "bad");
     } else if (enabled) {
-      status("方向键已启用（按住连续移动）", "ok");
+      status("方向键已启用", "ok");
     }
   });
   try {

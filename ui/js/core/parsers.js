@@ -111,14 +111,6 @@ export function driverRows(can, meta = null) {
   return [...rows.values()].sort((a, b) => Number(a.addr) - Number(b.addr));
 }
 
-export function onlineCount(can, meta = null) {
-  return driverRows(can, meta).length;
-}
-
-export function enabledCount(can, meta = null) {
-  return driverRows(can, meta).filter((d) => d.enabled === "yes").length;
-}
-
 export function hasEnabledTelemetry(can, meta = null) {
   return driverRows(can, meta).some((d) => d.enabled != null);
 }

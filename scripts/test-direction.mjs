@@ -4,7 +4,6 @@ import {
   directionLabel,
   directionToJog,
   gamepadButtonDirection,
-  gamepadDirection,
   gamepadStickDirection,
   isTypingTarget,
   keyboardDirection,
@@ -74,15 +73,6 @@ assert.equal(gamepadStickDirection(pad({}, [-1, 0])), "left");
 assert.equal(gamepadStickDirection(pad({}, [0, -1])), "up");
 assert.equal(gamepadStickDirection(pad({}, [0, 0])), null);
 assert.equal(gamepadButtonDirection(null), null);
-assert.equal(gamepadDirection(pad({ 14: true })), "left");
-assert.equal(gamepadDirection(pad({ 15: true })), "right");
-assert.equal(gamepadDirection(pad({ 12: true })), "up");
-assert.equal(gamepadDirection(pad({ 13: true })), "down");
-assert.equal(gamepadDirection(pad({}, [-1, 0])), "left");
-assert.equal(gamepadDirection(pad({}, [0, -1])), "up");
-assert.equal(gamepadDirection(pad({}, [0, 0])), null);
-assert.equal(gamepadDirection(pad({}, [0.1, -0.1])), null);
-assert.equal(gamepadDirection(null), null);
 
 assert.equal(stickDirection(-1, 0), "left");
 assert.equal(stickDirection(0, -1), "up");

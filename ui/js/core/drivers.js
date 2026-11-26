@@ -187,15 +187,6 @@ export function parseLimitSwitches(configMap) {
   return out;
 }
 
-// address -> role map for backwards-compatible consumers.
-export function roleMap(layout) {
-  const map = {};
-  for (const driver of layout && Array.isArray(layout.drivers) ? layout.drivers : []) {
-    map[driver.address] = driver.role;
-  }
-  return map;
-}
-
 // address -> { role, axis, protocol, protocolLabel } for the generic tables.
 export function driverMetaMap(layout) {
   const map = {};

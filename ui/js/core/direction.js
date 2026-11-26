@@ -8,8 +8,6 @@ export const DPAD_PLANES = {
   YZ: { first: "Y", second: "Z" },
 };
 
-export const DPAD_DIRECTIONS = ["left", "right", "up", "down"];
-
 const VECTORS = {
   left: { first: -1, second: 0 },
   right: { first: 1, second: 0 },
@@ -112,10 +110,6 @@ export function gamepadStickDirection(gamepad, deadzone = 0.35) {
   if (Math.abs(x) < deadzone && Math.abs(y) < deadzone) return null;
   if (Math.abs(x) >= Math.abs(y)) return x < 0 ? "left" : "right";
   return y < 0 ? "up" : "down";
-}
-
-export function gamepadDirection(gamepad, deadzone = 0.35) {
-  return gamepadButtonDirection(gamepad) || gamepadStickDirection(gamepad, deadzone);
 }
 
 // Virtual analog stick vector -> one of four cardinal directions.

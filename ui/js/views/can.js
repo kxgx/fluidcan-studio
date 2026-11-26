@@ -1,4 +1,4 @@
-import { exec, getCan, isSerial } from "../core/transport.js";
+import { exec } from "../core/transport.js";
 import { asText, canBusRows, driverRows, hasEnabledTelemetry } from "../core/parsers.js";
 import { state } from "../core/store.js";
 import { CAN_ADDRESS_LIMIT, driverMetaMap } from "../core/drivers.js";
@@ -49,13 +49,13 @@ export function renderCanView(can, { raw = true } = {}) {
     const driver = layout?.can?.driver || "";
     if (driver === "zdt") {
       capability.textContent =
-        "驱动能力：ZDT — $CANStatus/$CANPos/$CANScan 可用；$CANFaults/$CANDriverInfo/$CANRead 为 stub，$CANAutoConfig 无动作";
+        "ZDT：状态/位置/扫描；部分诊断仅 stub";
     } else if (driver === "pd42s1") {
-      capability.textContent = "驱动能力：PD42S1 — 位置/故障/使能/参数诊断可用；自动配置会改写驱动器波特率";
+      capability.textContent = "PD42S1：诊断/扫描；自动配置会改波特率";
     } else if (driver) {
-      capability.textContent = `驱动能力：${layout.can.driverLabel || driver} — 以固件实际实现为准`;
+      capability.textContent = `驱动：${layout.can.driverLabel || driver}`;
     } else {
-      capability.textContent = "驱动能力：未读取 config.yaml 或 can.driver 未设置";
+      capability.textContent = "驱动：未读取";
     }
   }
   const canReadEnabled = hasEnabledTelemetry(can, meta);
@@ -71,17 +71,9 @@ export function renderCanView(can, { raw = true } = {}) {
   return can;
 }
 
-export async function refreshCanView() {
-  return renderCanView(await getCan());
-}
-
 export async function runCanCommand(command) {
   const text = await exec(command);
   const out = $("canOut");
   if (out) out.textContent = `> ${command}\n${text || "(无输出)"}`;
   return text;
-}
-
-export async function scanBus() {
-  return runCanCommand(isSerial() ? "$CANScan" : "$CANScan");
 }

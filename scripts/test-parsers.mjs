@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { canBusRows, driverRows, onlineCount, enabledCount, stateParts, parsePinString } from "../ui/js/core/parsers.js";
+import { canBusRows, driverRows, stateParts, parsePinString } from "../ui/js/core/parsers.js";
 
 const can = {
   positions: [
@@ -25,8 +25,6 @@ assert.deepEqual(driverRows(can).map((r) => r.role), ["", "", "", ""]);
 assert.equal(rows[2].enabled, "no");
 assert.equal(rows[2].inpos, "no");
 assert.equal(rows[0].pos, "269071");
-assert.equal(onlineCount(can), 4);
-assert.equal(enabledCount(can), 3);
 assert.deepEqual(stateParts("<Idle|MPos:1.000,2.000,0.000|FS:0,0>"), {
   state: "Idle|MPos:1.000,2.000,0.000|FS:0,0",
   name: "Idle",
@@ -72,8 +70,6 @@ assert.equal(zdtRows[0].protocolLabel, "ZDT");
 assert.equal(zdtRows[0].pos, "0");
 assert.equal(zdtRows[1].pos, "-1");
 assert.equal(zdtRows[0].enabled, undefined);
-assert.equal(onlineCount(zdtCan), 2);
-assert.equal(enabledCount(zdtCan), 0);
 assert.deepEqual(canBusRows(zdtCan), [
   ["驱动就绪", "yes"],
   ["控制就绪", "yes"],

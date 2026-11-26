@@ -48,7 +48,7 @@ for (const label of labels) {
 }
 const install = fs.readFileSync(path.join(root, "ui/js/views/install.js"), "utf8");
 assert.ok(install.includes("legacyNeedsConfirm") && install.includes("legacyConfirm"), "legacy hardware confirmation missing");
-assert.ok(install.includes("NoWiFi 固件没有网络栈"), "NoWiFi network OTA guard missing");
+assert.ok(install.includes("NoWiFi 无网络栈"), "NoWiFi network OTA guard missing");
 assert.ok(install.includes("legacyNeedsConfirm() && !legacyConfirmed()"), "legacy confirmation must gate Web Serial too");
 assert.ok(
   fs.readFileSync(path.join(root, "ui/index.html"), "utf8").includes("webFlashPrepareBtn"),

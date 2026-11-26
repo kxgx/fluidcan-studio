@@ -96,7 +96,7 @@ function refreshCanInBackground(reason = "") {
     return canRefreshPromise;
   }
   canRefreshKey = key;
-  log("CAN 数据后台读取中…（不阻塞连接/状态；驱动器未上电时可能较慢）");
+  log("CAN 数据读取中…");
   canRefreshPromise = refreshCanData()
     .then((result) => {
       if (result?.stale) return result;
@@ -140,7 +140,7 @@ async function loadDriverLayout() {
     applyAxisOptions(layout);
     const addressText = layout.addressList.length ? layout.addressList.join(",") : "无";
     log(
-      `config.yaml：解析到 ${layout.count} 台 CAN 驱动器（地址 ${addressText}），CAN 总线地址上限 ${layout.limit}`,
+      `config.yaml：${layout.count} 台驱动器（地址 ${addressText}）`,
       layout.warnings.length ? "err" : "ok",
     );
     for (const warning of layout.warnings) log("config.yaml 警告: " + warning, "err");
@@ -148,7 +148,7 @@ async function loadDriverLayout() {
   } catch (e) {
     if (currentTransportKey() !== expected) return null;
     patch({ driverLayout: null });
-    log("读取 config.yaml 失败，驱动计数/零位地址不可用: " + e, "err");
+    log("读取 config.yaml 失败: " + e, "err");
     return null;
   }
 }
@@ -171,7 +171,7 @@ async function scanDevices() {
   const select = $("scanResults");
   if (!select) return;
   if (scanBusy) {
-    log("扫描已在进行中，请等待本次扫描结束", "err");
+    log("扫描进行中", "err");
     return;
   }
   scanBusy = true;
@@ -179,12 +179,12 @@ async function scanDevices() {
   setBusyButton("scanBtn", true, "扫描设备", "扫描中...");
   select.disabled = true;
   setScanPill("扫描中...", "warn2");
-  select.innerHTML = "<option>扫描中...</option>";
+  select.innerHTML = "<option>扫描中…</option>";
   try {
     const j = await transport.scan();
     const devices = j.devices || [];
     const picker = devices.length
-      ? (devices.length > 1 ? '<option value="">扫描结果（选择设备）</option>' : "") +
+      ? (devices.length > 1 ? '<option value="">选择设备</option>' : "") +
         devices
           .map((d) => `<option value="${esc(d.url)}">${esc(d.version || "FluidNC")} · ${esc(d.ip)}</option>`)
           .join("")
@@ -206,16 +206,16 @@ async function scanDevices() {
       // connecting to the wrong device.
       input.value = "";
       autoPrefilledDevice = "";
-      log("已清空上次的设备地址（扫描到多台设备），请从“扫描结果”中选择", "err");
+      log("请选择扫描结果", "err");
     }
     setScanPill(scanMessage(devices), devices.length ? "ok" : "bad");
     const subnets = (j.subnets || []).join(", ");
     log(`扫描 ${subnets}: ${devices.length} 台（${((Date.now() - started) / 1000).toFixed(1)}s）`, devices.length ? "ok" : "err");
-    if (filled) log(`扫描结果已填入地址 ${filled}；点击“连接”连接该设备`, "ok");
-    else if (single) log(`扫描到 1 台设备 ${single}；输入框已有地址，未覆盖（可清空后重扫或在“扫描结果”中选择）`, "ok");
-    else if (devices.length > 1) log("扫描到多台设备：在“扫描结果”中选择一台，再点击“连接”", "ok");
+    if (filled) log(`已填入 ${filled}，点“连接”`, "ok");
+    else if (single) log(`发现 ${single}；未覆盖已输入地址`, "ok");
+    else if (devices.length > 1) log("发现多台，请选择一台", "ok");
     if (!devices.length && canRefreshPromise) {
-      log("提示：CAN 数据正在后台读取，设备可能忙于响应；可稍后重新扫描", "err");
+      log("CAN 读取中，稍后重扫", "err");
     }
   } catch (e) {
     select.innerHTML = '<option value="">扫描失败</option>';
@@ -233,7 +233,7 @@ async function scanDevices() {
 // scan, so the two buttons stay independent.
 async function connectDevice() {
   if (connectBusy) {
-    log("连接正在处理中，请等待本次连接结束", "err");
+    log("连接处理中", "err");
     return;
   }
   const target = resolveConnectTarget($("deviceUrl")?.value, $("scanResults")?.value);
@@ -483,20 +483,20 @@ async function boot() {
   if (lastDevice && $("deviceUrl") && !$("deviceUrl").value.trim()) {
     $("deviceUrl").value = lastDevice;
     autoPrefilledDevice = lastDevice;
-    log(`上次连接的设备：${lastDevice}（已填入地址，可直接点“连接”；扫描到新设备会更新它）`);
+    log(`上次设备：${lastDevice}`);
   }
   // Any manual edit invalidates the auto-prefill, so scans no longer overwrite
   // it; this keeps user input authoritative.
   $("deviceUrl")?.addEventListener("input", () => {
     autoPrefilledDevice = "";
   });
-  log("FluidCAN Studio 已启动：“扫描设备”只发现设备，“连接”用地址输入框/扫描结果建立 WiFi 连接，串口是独立链路；启动只自动扫描一次，不自动连接。");
+  log("FluidCAN Studio 已启动");
   // A remembered device is already usable.  Do not launch a 254-host scan at
   // the same moment the user clicks connect: on a PC with several virtual
   // adapters that scan competes with the connect probe and is the main source
   // of the "连接中..." delay (Android usually has only one Wi-Fi subnet).
   if (lastDevice) {
-    log("已有上次设备，跳过启动扫描以避免和连接探测争用；需要发现新设备时点“扫描设备”");
+    log("使用上次设备；需要新设备请点扫描");
   } else {
     setTimeout(scanDevices, 600);
   }
