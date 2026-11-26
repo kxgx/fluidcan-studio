@@ -134,19 +134,27 @@ export async function getCan(light = false) {
   return api("/can" + (light ? "?light=1" : ""));
 }
 
-// Board build string plus the ZDT firmware/hardware report.  The HTTP backend
-// reads both in parallel; serial has to issue the two console commands
-// sequentially.  Callers run this in the background, never before connect.
+// Fast board build string.  Never combine this with $CANDriverInfo: FluidsNC
+// processes console commands on one channel, so the slow CAN report would delay
+// the board banner.  Drivers are read by getFirmwareDrivers() afterwards.
 export async function getFirmware() {
   if (mode === "serial") {
     const build = await exec("$I");
+    return { base: "serial:" + serialName, build };
+  }
+  return api("/firmware");
+}
+
+// Slow per-driver firmware/hardware report, intentionally a separate request.
+export async function getFirmwareDrivers() {
+  if (mode === "serial") {
     const drivers = await execRaw("$CANDriverInfo");
     if (!drivers.ok) {
       throw new Error("串口 $CANDriverInfo 超时/被截断（驱动可能未全部上电）");
     }
-    return { base: "serial:" + serialName, build, drivers: drivers.text || "" };
+    return { base: "serial:" + serialName, drivers: drivers.text || "" };
   }
-  return api("/firmware");
+  return api("/firmware/drivers");
 }
 
 // Device configuration (config.yaml).  WiFi reads /api/config; the serial link

@@ -207,6 +207,8 @@ const transportView = fs.readFileSync(path.join(root, "ui/js/core/transport.js")
 assert.ok(transportView.includes("getDeviceConfig"), "device config abstraction missing");
 assert.ok(transportView.includes("$CD"), "serial config read must use $CD");
 assert.ok(app.includes("getDeviceConfig"), "driver layout must use the transport config abstraction");
+assert.ok(fs.readFileSync(path.join(root, "ui/js/views/overview.js"), "utf8").includes("getFirmwareDrivers"),
+  "firmware view must fetch the slow driver report separately");
 assert.ok(configView.includes("串口模式不支持上传配置"), "config upload over serial must be refused");
 
 // ---- In-app Web Serial flasher (local packages; no bundled firmware) ------

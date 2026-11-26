@@ -5,6 +5,7 @@ import {
   getStatus,
   getCan,
   getFirmware,
+  getFirmwareDrivers,
   isSerial,
 } from "../core/transport.js";
 import { asText, driverRows, pick, stateParts } from "../core/parsers.js";
@@ -119,7 +120,20 @@ export async function refreshFirmwareData(key = firmwareKey()) {
     return { skipped: true };
   }
   try {
-    const report = await getFirmware();
+    // The connect/status path already has the board build.  Only fetch it here
+    // when the panel is opened before status has populated it.
+    let build = state.build;
+    if (!build) {
+      const report = await getFirmware();
+      if (firmwareKey() !== key) return { skipped: true };
+      if (typeof report.build === "string" && report.build) {
+        build = report.build;
+        patch({ build });
+        renderBoardFirmware(build);
+      }
+    }
+
+    const report = await getFirmwareDrivers();
     if (firmwareKey() !== key) return { skipped: true };
     const rawDrivers = report.drivers;
     let drivers = "";
@@ -128,10 +142,6 @@ export async function refreshFirmwareData(key = firmwareKey()) {
       drivers = rawDrivers;
     } else if (rawDrivers && typeof rawDrivers === "object" && rawDrivers.error) {
       error = String(rawDrivers.error);
-    }
-    if (typeof report.build === "string" && report.build && !state.build) {
-      patch({ build: report.build });
-      renderBoardFirmware(report.build);
     }
     patch({ firmwareDrivers: drivers, firmwareError: error });
     renderDriverFirmware(drivers, error);

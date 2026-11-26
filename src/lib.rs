@@ -451,23 +451,33 @@ async fn get_can(State(st): State<Arc<AppState>>, Query(query): Query<CanQuery>)
     Json(out).into_response()
 }
 
-// Board build string plus per-driver firmware/hardware versions reported by
-// $CANDriverInfo.  Kept out of /status so the fast connect/status path is not
-// blocked by the CAN report (which can take seconds on an unpowered bus).
+// Fast board/build read only.  The device command channel is single-threaded,
+// so this endpoint must never wait for the slow CAN driver report.
 async fn get_firmware(State(st): State<Arc<AppState>>) -> Response {
     let base = current_base(&st).await;
-    let (build, drivers) = tokio::join!(
-        device_command_timeout(&st.client, &base, "$I", STATUS_COMMAND_TIMEOUT),
-        device_command_timeout(&st.client, &base, "$CANDriverInfo", CAN_COMMAND_TIMEOUT),
-    );
-    let field = |result: Result<String, String>| match result {
-        Ok(v) => json!(v),
-        Err(e) => json!({"error": e}),
-    };
+    let build = device_command_timeout(&st.client, &base, "$I", STATUS_COMMAND_TIMEOUT).await;
     Json(json!({
         "base": base,
-        "build": field(build),
-        "drivers": field(drivers),
+        "build": match build {
+            Ok(v) => json!(v),
+            Err(e) => json!({"error": e}),
+        },
+    }))
+    .into_response()
+}
+
+// Slow CAN report, fetched separately after the board banner is rendered.
+// Keeping it off /firmware prevents $CANDriverInfo from delaying $I on the
+// single FluidNC command channel.
+async fn get_firmware_drivers(State(st): State<Arc<AppState>>) -> Response {
+    let base = current_base(&st).await;
+    let drivers = device_command_timeout(&st.client, &base, "$CANDriverInfo", CAN_COMMAND_TIMEOUT).await;
+    Json(json!({
+        "base": base,
+        "drivers": match drivers {
+            Ok(v) => json!(v),
+            Err(e) => json!({"error": e}),
+        },
     }))
     .into_response()
 }
@@ -2240,6 +2250,7 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/connect", post(connect))
         .route("/status", get(get_status))
         .route("/firmware", get(get_firmware))
+        .route("/firmware/drivers", get(get_firmware_drivers))
         .route("/can", get(get_can))
         .route("/command", post(run_command))
         .route("/config", get(get_config).put(put_config))

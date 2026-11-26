@@ -6,7 +6,7 @@ Rust + Tauri 的 FluidNC CAN 调试、控制、配置与固件安装工具，面
 
 ![桌面 GUI](docs/gui.png)
 
-当前版本：`studio-v0.4.7`
+当前版本：`studio-v0.4.8`
 
 ## 功能
 
@@ -175,8 +175,8 @@ dist/FluidCAN-Studio-android-arm64.apk
 触发：
 
 ```powershell
-git tag studio-v0.4.7
-git push origin studio-v0.4.7
+git tag studio-v0.4.8
+git push origin studio-v0.4.8
 ```
 
 依赖的 Actions 使用当前最新大版本，包括：
@@ -267,7 +267,8 @@ Android 是独立构建版本，复用同一套 Rust 后端、网页 UI 和内�
 
 ```text
 GET /api/scan
-GET /api/firmware       # $I + $CANDriverInfo（后台，慢 CAN 不阻塞连接）
+GET /api/firmware       # $I（快速，不等待 CAN）
+GET /api/firmware/drivers # $CANDriverInfo（后台慢报告）
 GET /api/settings       # { jog_max_feed }
 PUT /api/settings       # { jog_max_feed: 100..3000 }
 ```
