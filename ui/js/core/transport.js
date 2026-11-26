@@ -122,7 +122,7 @@ export async function getStatus() {
 // Uniform CAN snapshot for the overview and CAN view.
 // `light` skips $CANDriverInfo for the fast overview refresh; the raw CAN
 // view still requests the full snapshot.
-export async function getCan(light = false) {
+export async function getCan(light = false, fresh = false) {
   if (mode === "serial") {
     const fields = ["status", "faults", "positions"];
     if (!light) fields.push("drivers");
@@ -131,7 +131,7 @@ export async function getCan(light = false) {
     for (const field of fields) out[field] = await exec(commands[field]);
     return out;
   }
-  return api("/can" + (light ? "?light=1" : ""));
+  return api("/can" + (light ? "?light=1" : "") + (fresh ? (light ? "&fresh=1" : "?fresh=1") : ""));
 }
 
 // Fast board build string.  Never combine this with $CANDriverInfo: FluidsNC
@@ -146,7 +146,7 @@ export async function getFirmware() {
 }
 
 // Slow per-driver firmware/hardware report, intentionally a separate request.
-export async function getFirmwareDrivers() {
+export async function getFirmwareDrivers(fresh = false) {
   if (mode === "serial") {
     const drivers = await execRaw("$CANDriverInfo");
     if (!drivers.ok) {
@@ -154,7 +154,7 @@ export async function getFirmwareDrivers() {
     }
     return { base: "serial:" + serialName, drivers: drivers.text || "" };
   }
-  return api("/firmware/drivers");
+  return api("/firmware/drivers" + (fresh ? "?fresh=1" : ""));
 }
 
 // Device configuration (config.yaml).  WiFi reads /api/config; the serial link

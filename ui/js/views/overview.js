@@ -114,7 +114,7 @@ function firmwareKey() {
 let firmwareRefreshPromise = null;
 let firmwareRefreshKey = "";
 
-export async function refreshFirmwareData(key = firmwareKey()) {
+export async function refreshFirmwareData(key = firmwareKey(), fresh = false) {
   renderBoardFirmware(state.build || "");
   if (!state.connected || !key.endsWith("|")) {
     return { skipped: true };
@@ -133,7 +133,7 @@ export async function refreshFirmwareData(key = firmwareKey()) {
       }
     }
 
-    const report = await getFirmwareDrivers();
+    const report = await getFirmwareDrivers(fresh);
     if (firmwareKey() !== key) return { skipped: true };
     const rawDrivers = report.drivers;
     let drivers = "";
@@ -155,13 +155,13 @@ export async function refreshFirmwareData(key = firmwareKey()) {
   }
 }
 
-export function refreshFirmwareInBackground() {
+export function refreshFirmwareInBackground(fresh = false) {
   const key = firmwareKey();
   if (!state.connected || key.endsWith("|")) return Promise.resolve({ skipped: true });
   if (firmwareRefreshPromise && firmwareRefreshKey === key) return firmwareRefreshPromise;
   firmwareRefreshKey = key;
   renderDriverFirmware(state.firmwareDrivers || "", state.firmwareError || "");
-  firmwareRefreshPromise = refreshFirmwareData(key).finally(() => {
+  firmwareRefreshPromise = refreshFirmwareData(key, fresh).finally(() => {
     if (firmwareRefreshKey === key) {
       firmwareRefreshPromise = null;
       firmwareRefreshKey = "";

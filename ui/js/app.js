@@ -432,7 +432,7 @@ async function refreshAll() {
     if (!state.driverLayout) void loadDriverLayout();
     setLinkPillFromTransport();
     log(`状态已刷新（${((Date.now() - started) / 1000).toFixed(1)}s），CAN 数据后台读取中`, "ok");
-    refreshCanInBackground("刷新").finally(() => void refreshFirmwareInBackground());
+    refreshCanInBackground("刷新").finally(() => void refreshFirmwareInBackground(true));
   } catch (e) {
     log(String(e), "err");
     setConn(false, "读取失败");

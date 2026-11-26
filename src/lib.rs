@@ -7,7 +7,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use axum::{
@@ -102,8 +102,16 @@ struct AppState {
     serial_io_lock: Arc<tokio::sync::Mutex<()>>,
     serial_exec_lock: Arc<tokio::sync::Mutex<()>>,
     tool_lock: Arc<tokio::sync::Mutex<()>>,
+    driver_report: Arc<Mutex<Option<DriverReportCache>>>,
+    driver_report_lock: Arc<tokio::sync::Mutex<()>>,
     live: Arc<Mutex<Option<TcpStream>>>,
     web_token: Option<String>,
+}
+
+struct DriverReportCache {
+    base: String,
+    text: String,
+    at: Instant,
 }
 
 #[derive(Default)]
@@ -383,6 +391,7 @@ async fn connect(State(st): State<Arc<AppState>>, Json(req): Json<ConnectReq>) -
         Ok(text) => {
             *st.base.write().await = requested.clone();
             *st.saved_base.write().await = requested.clone();
+            *st.driver_report.lock().unwrap() = None;
             *st.live.lock().unwrap() = None;
             save_last_device(&requested);
             Json(json!({
@@ -429,25 +438,57 @@ struct CanQuery {
     // light=1 skips $CANDriverInfo, which the overview never renders and which
     // is one of the slowest report commands on an unpowered bus.
     light: Option<u8>,
+    // fresh=1 bypasses the short-lived driver-report cache (manual refresh).
+    fresh: Option<u8>,
+}
+
+const DRIVER_REPORT_TTL: Duration = Duration::from_secs(15);
+
+async fn read_driver_report(st: &AppState, base: &str, fresh: bool) -> Result<(String, bool), String> {
+    if !fresh {
+        if let Some(cache) = st.driver_report.lock().unwrap().as_ref() {
+            if cache.base == base && cache.at.elapsed() < DRIVER_REPORT_TTL {
+                return Ok((cache.text.clone(), true));
+            }
+        }
+    }
+    // Single-flight: concurrent overview/CAN/firmware requests share one
+    // $CANDriverInfo transaction instead of queueing several on the device.
+    let _guard = st.driver_report_lock.lock().await;
+    if !fresh {
+        if let Some(cache) = st.driver_report.lock().unwrap().as_ref() {
+            if cache.base == base && cache.at.elapsed() < DRIVER_REPORT_TTL {
+                return Ok((cache.text.clone(), true));
+            }
+        }
+    }
+    let text = device_command_timeout(&st.client, base, "$CANDriverInfo", CAN_COMMAND_TIMEOUT).await?;
+    *st.driver_report.lock().unwrap() = Some(DriverReportCache { base: base.to_string(), text: text.clone(), at: Instant::now() });
+    Ok((text, false))
 }
 
 async fn get_can(State(st): State<Arc<AppState>>, Query(query): Query<CanQuery>) -> Response {
     let base = current_base(&st).await;
+    let started = Instant::now();
     let mut commands: Vec<(&str, &str)> = vec![
         ("status", "$CANStatus"),
         ("faults", "$CANFaults"),
         ("positions", "$CANPos"),
     ];
-    if query.light != Some(1) {
-        commands.push(("drivers", "$CANDriverInfo"));
-    }
     let mut out = json!({ "base": base });
-    for (key, cmd) in commands {
+    for (key, cmd) in commands.drain(..) {
         out[key] = match device_command_timeout(&st.client, &base, cmd, CAN_COMMAND_TIMEOUT).await {
             Ok(v) => json!(v),
             Err(e) => json!({"error": e}),
         };
     }
+    if query.light != Some(1) {
+        out["drivers"] = match read_driver_report(&st, &base, query.fresh == Some(1)).await {
+            Ok((text, _cached)) => json!(text),
+            Err(e) => json!({"error": e}),
+        };
+    }
+    out["elapsed_ms"] = json!(started.elapsed().as_millis() as u64);
     Json(out).into_response()
 }
 
@@ -469,15 +510,20 @@ async fn get_firmware(State(st): State<Arc<AppState>>) -> Response {
 // Slow CAN report, fetched separately after the board banner is rendered.
 // Keeping it off /firmware prevents $CANDriverInfo from delaying $I on the
 // single FluidNC command channel.
-async fn get_firmware_drivers(State(st): State<Arc<AppState>>) -> Response {
+async fn get_firmware_drivers(
+    State(st): State<Arc<AppState>>,
+    Query(query): Query<CanQuery>,
+) -> Response {
     let base = current_base(&st).await;
-    let drivers = device_command_timeout(&st.client, &base, "$CANDriverInfo", CAN_COMMAND_TIMEOUT).await;
+    let started = Instant::now();
+    let report = read_driver_report(&st, &base, query.fresh == Some(1)).await;
     Json(json!({
         "base": base,
-        "drivers": match drivers {
-            Ok(v) => json!(v),
+        "drivers": match report {
+            Ok((text, _cached)) => json!(text),
             Err(e) => json!({"error": e}),
         },
+        "elapsed_ms": started.elapsed().as_millis() as u64,
     }))
     .into_response()
 }
@@ -2208,6 +2254,8 @@ fn build_state(web_token: Option<String>) -> Arc<AppState> {
         serial_io_lock: Arc::new(tokio::sync::Mutex::new(())),
         serial_exec_lock: Arc::new(tokio::sync::Mutex::new(())),
         tool_lock: Arc::new(tokio::sync::Mutex::new(())),
+        driver_report: Arc::new(Mutex::new(None)),
+        driver_report_lock: Arc::new(tokio::sync::Mutex::new(())),
         live: Arc::new(Mutex::new(None)),
         web_token,
     })
