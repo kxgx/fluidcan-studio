@@ -116,7 +116,8 @@ let firmwareRefreshKey = "";
 
 export async function refreshFirmwareData(key = firmwareKey(), fresh = false) {
   renderBoardFirmware(state.build || "");
-  if (!state.connected || !key.endsWith("|")) {
+  // key is "http|<base>" or "serial|<port>"; an empty key ends with "|".
+  if (!state.connected || key.endsWith("|")) {
     return { skipped: true };
   }
   try {
