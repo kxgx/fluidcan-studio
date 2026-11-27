@@ -152,6 +152,132 @@ export function makeDirectionStabilizer(required = 2) {
   };
 }
 
+
+// ---------------------------------------------------------------------------
+// NC-style multi-axis jog helpers.
+//
+// Arrow keys/D-pad are X/Y; PageUp/PageDown are Z.  A held input set is a
+// signed axis vector, so X/Y/Z may be combined in one $J command.
+
+export function zeroVector() {
+  return { X: 0, Y: 0, Z: 0 };
+}
+
+export function mergeVector(target, part) {
+  const out = target || zeroVector();
+  if (part && part.X) out.X = part.X;
+  if (part && part.Y) out.Y = part.Y;
+  if (part && part.Z) out.Z = part.Z;
+  return out;
+}
+
+export function vectorIsZero(vector) {
+  return !vector || (!vector.X && !vector.Y && !vector.Z);
+}
+
+export function keyboardVector(key, { wasd = false } = {}) {
+  const text = String(key ?? "");
+  switch (text) {
+    case "ArrowLeft":
+      return { X: -1 };
+    case "ArrowRight":
+      return { X: 1 };
+    case "ArrowUp":
+      return { Y: 1 };
+    case "ArrowDown":
+      return { Y: -1 };
+    case "PageUp":
+      return { Z: 1 };
+    case "PageDown":
+      return { Z: -1 };
+    default:
+      break;
+  }
+  if (!wasd) return null;
+  switch (text.toLowerCase()) {
+    case "a":
+      return { X: -1 };
+    case "d":
+      return { X: 1 };
+    case "w":
+      return { Y: 1 };
+    case "s":
+      return { Y: -1 };
+    default:
+      return null;
+  }
+}
+
+// Gamepad digital mapping: D-pad X/Y, LB/RB Z.  Triggers are not used so a
+// half-pressed trigger cannot leave an axis running.
+export function gamepadDigitalVector(gamepad) {
+  if (!gamepad || !Array.isArray(gamepad.buttons)) return null;
+  if (gamepad.mapping != null && gamepad.mapping !== "standard") return null;
+  const pressed = (index) => Boolean(gamepad.buttons[index] && gamepad.buttons[index].pressed);
+  const vector = zeroVector();
+  if (pressed(14)) vector.X = -1;
+  if (pressed(15)) vector.X = 1;
+  if (pressed(12)) vector.Y = 1;
+  if (pressed(13)) vector.Y = -1;
+  if (pressed(4)) vector.Z = 1;   // LB
+  if (pressed(5)) vector.Z = -1;  // RB
+  return vectorIsZero(vector) ? null : vector;
+}
+
+export function gamepadStickVector(gamepad, deadzone = 0.35) {
+  if (!gamepad || !Array.isArray(gamepad.axes)) return null;
+  if (gamepad.mapping != null && gamepad.mapping !== "standard") return null;
+  const x = Number(gamepad.axes[0] || 0);
+  const y = Number(gamepad.axes[1] || 0);
+  const vector = zeroVector();
+  if (Math.abs(x) >= deadzone) vector.X = x < 0 ? -1 : 1;
+  if (Math.abs(y) >= deadzone) vector.Y = y < 0 ? 1 : -1;
+  return vectorIsZero(vector) ? null : vector;
+}
+
+export function stickVector(dx, dy, deadzone = 0.35) {
+  const x = Number(dx || 0);
+  const y = Number(dy || 0);
+  const vector = zeroVector();
+  if (Math.abs(x) >= deadzone) vector.X = x < 0 ? -1 : 1;
+  if (Math.abs(y) >= deadzone) vector.Y = y < 0 ? 1 : -1;
+  return vectorIsZero(vector) ? null : vector;
+}
+
+// Merge digital and stick input.  A D-pad/button axis wins over the stick on
+// the same axis; independent axes remain combinable.
+export function mergeGamepadVector(digital, analog) {
+  const out = zeroVector();
+  if (digital) Object.assign(out, digital);
+  if (analog) {
+    if (!out.X && analog.X) out.X = analog.X;
+    if (!out.Y && analog.Y) out.Y = analog.Y;
+    if (!out.Z && analog.Z) out.Z = analog.Z;
+  }
+  return vectorIsZero(out) ? null : out;
+}
+
+export function vectorToJog(vector, distance = 100, feed = 500) {
+  if (vectorIsZero(vector)) return "";
+  const d = Number(distance);
+  const f = Number(feed);
+  if (!Number.isFinite(d) || d <= 0 || !Number.isFinite(f) || f <= 0) return "";
+  let axes = "";
+  for (const axis of ["X", "Y", "Z"]) {
+    const sign = Number(vector[axis] || 0);
+    if (sign) axes += `${axis}${sign > 0 ? d : -d}`;
+  }
+  return axes ? `$J=G21G91${axes}F${f}` : "";
+}
+
+export function vectorLabel(vector) {
+  if (vectorIsZero(vector)) return "--";
+  return ["X", "Y", "Z"]
+    .filter((axis) => vector[axis])
+    .map((axis) => `${axis}${vector[axis] > 0 ? "+" : "-"}`)
+    .join(" ");
+}
+
 export function directionLabel(plane, direction) {
   const config = DPAD_PLANES[normalizePlane(plane)];
   const vector = VECTORS[String(direction ?? "").trim().toLowerCase()];

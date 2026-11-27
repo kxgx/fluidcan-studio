@@ -10,6 +10,11 @@ import {
   makeDirectionStabilizer,
   normalizePlane,
   stickDirection,
+  keyboardVector,
+  gamepadDigitalVector,
+  gamepadStickVector,
+  vectorToJog,
+  vectorLabel,
 } from "../ui/js/core/direction.js";
 
 assert.equal(normalizePlane("xy"), "XY");
@@ -32,6 +37,18 @@ assert.equal(directionToJog("YZ", "left", 1, 500), "$J=G21G91Y-1F500");
 assert.equal(directionToJog("XY", "sideways", 1, 500), "");
 assert.equal(directionToJog("XY", "left", 0, 500), "");
 assert.equal(directionToJog("XY", "left", 1, 0), "");
+
+assert.deepEqual(keyboardVector("ArrowLeft"), { X: -1 });
+assert.deepEqual(keyboardVector("ArrowUp"), { Y: 1 });
+assert.deepEqual(keyboardVector("PageUp"), { Z: 1 });
+assert.deepEqual(keyboardVector("PageDown"), { Z: -1 });
+assert.deepEqual(keyboardVector("w", { wasd: true }), { Y: 1 });
+assert.equal(keyboardVector("w"), null);
+assert.equal(vectorToJog({ X: 1, Y: -1, Z: 1 }, 10, 500), "$J=G21G91X10Y-10Z10F500");
+assert.equal(vectorLabel({ X: 1, Z: -1 }), "X+ Z-");
+const vectorPad = (pressed) => ({ mapping: "standard", buttons: Array.from({ length: 16 }, (_, i) => ({ pressed: pressed.includes(i) })), axes: [0, 0] });
+assert.deepEqual(gamepadDigitalVector(vectorPad([12, 15, 4])), { X: 1, Y: 1, Z: 1 });
+assert.deepEqual(gamepadStickVector({ mapping: "standard", buttons: [], axes: [-0.8, 0.8] }), { X: -1, Y: -1, Z: 0 });
 assert.equal(directionLabel("XZ", "down"), "Z-");
 assert.equal(directionLabel("XY", "up"), "Y+");
 

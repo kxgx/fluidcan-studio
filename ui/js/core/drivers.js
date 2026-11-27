@@ -65,6 +65,8 @@ export function parseDriverLayout(configMap) {
   const axes = [];
   const protocols = [];
   const axisLimits = {};
+  const axisTravel = {};
+  const axisSoft = {};
   const seen = new Map();
   const duplicates = [];
 
@@ -84,6 +86,19 @@ export function parseDriverLayout(configMap) {
     if (!motors.length) continue;
     const limit = axisMaxFeed(axisNode);
     if (limit != null) axisLimits[axis] = limit;
+    const travel = Number(axisNode.max_travel_mm);
+    if (Number.isFinite(travel) && travel > 0) axisTravel[axis] = travel;
+    const soft = {};
+    if (axisNode.use_soft_limit_range) {
+      const lo = Number(axisNode.soft_limit_min_mm);
+      const hi = Number(axisNode.soft_limit_max_mm);
+      if (Number.isFinite(lo)) soft.min = lo;
+      if (Number.isFinite(hi)) soft.max = hi;
+    } else if (axisNode.soft_limits && Number.isFinite(travel) && travel > 0) {
+      soft.min = 0;
+      soft.max = travel;
+    }
+    if (Object.keys(soft).length) axisSoft[axis] = soft;
     axes.push(axis);
     motors.forEach((motor, index) => {
       const role = motors.length > 1 ? `${axis}${index}` : axis;
@@ -142,6 +157,8 @@ export function parseDriverLayout(configMap) {
     outOfRange,
     protocols,
     axisLimits,
+    axisTravel,
+    axisSoft,
     can: {
       driver: configuredDriver,
       driverLabel: configuredDriver ? protocolLabel(configuredDriver) : "",

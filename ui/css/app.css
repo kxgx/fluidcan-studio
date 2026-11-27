@@ -41,6 +41,11 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
 .stick-knob{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;border-radius:50%;border:1px solid #4aa8ff;background:linear-gradient(145deg,#2b9cff,#1b5d92);box-shadow:0 4px 16px #0008;transition:transform .06s linear;pointer-events:none}
 @media(max-width:600px){.dpad{width:132px;height:132px}.virtual-stick{width:112px;height:112px}.stick-knob{width:40px;height:40px;margin:-20px 0 0 -20px}}
 
-.dpad,.dpad-btn{touch-action:none}
+.dpad{z-index:1}
+.dpad-z{display:flex;flex-direction:column;gap:8px;align-items:stretch}
+.dpad-z button{border:1px solid #2b4054;background:#152131;color:var(--txt);border-radius:10px;padding:10px 14px;font-size:15px;min-width:108px}
+.dpad-z button:active,.dpad-z button.held{border-color:var(--acc);color:#fff;background:#1d3048}
+.dpad-z kbd{font-size:11px;color:var(--dim);font-family:inherit}
+.dpad,.dpad-btn,.dpad-z button{touch-action:none}
 
 #dpadFeedValue{display:inline-block;min-width:92px;font-variant-numeric:tabular-nums}

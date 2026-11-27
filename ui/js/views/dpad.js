@@ -1,4 +1,5 @@
 import { state, subscribe } from "../core/store.js";
+import { stateParts } from "../core/parsers.js";
 import { maxFeedForAxes } from "../core/drivers.js";
 import {
   clampFeed,
@@ -12,6 +13,16 @@ import {
   normalizePlane,
   planeAxes,
   stickDirection,
+  gamepadDigitalVector,
+  gamepadStickVector,
+  mergeGamepadVector,
+  keyboardVector,
+  mergeVector,
+  stickVector,
+  vectorIsZero,
+  vectorLabel,
+  vectorToJog,
+  zeroVector,
 } from "../core/direction.js";
 import { getStatus, httpGet, httpPost, jogStart, jogStop } from "../core/transport.js";
 
@@ -21,7 +32,9 @@ const $ = (id) => document.getElementById(id);
 
 let initialized = false;
 let enabled = false;
-let active = null;
+let active = null; // { vector, source, feed, token }
+let pendingStart = null; // latest input rejected while a stop was confirming
+let inputRevision = 0; // increments on every requested input change
 let jogToken = 0;
 let rearmTimer = null;
 let stopPending = false;
@@ -42,8 +55,10 @@ let lastGamepadButton = null;
 let gamepadArmed = true;
 let analogGamepadDirection = null;
 let analogStickDirection = null;
+let virtualVector = zeroVector();
+const virtualPressed = new Map();
+let virtualStickPart = zeroVector();
 let virtualStickPointer = null;
-let virtualDirection = null;
 const heldKeys = new Map();
 const gamepadStabilizer = makeDirectionStabilizer(2);
 const stickStabilizer = makeDirectionStabilizer(2);
@@ -55,13 +70,10 @@ function status(text, kind = "") {
   el.className = "pill" + (kind ? ` ${kind}` : "");
 }
 
-function currentPlane() {
-  return normalizePlane($("dpadPlane")?.value);
-}
-
 function configMaxFeed() {
-  // The firmware defaults an axis with no max_speed/max_rate to 1000 mm/min.
-  const max = maxFeedForAxes(state.driverLayout, planeAxes(currentPlane()), 1000);
+  // One speed slider feeds combined X/Y/Z motion; use the most restrictive of
+  // the three axes.  Missing max_rate falls back to FluidNC's 1000 mm/min.
+  const max = maxFeedForAxes(state.driverLayout, ["X", "Y", "Z"], 1000);
   return Number.isFinite(max) && max > 0 ? max : 3000;
 }
 
@@ -128,25 +140,62 @@ function applyFeedLimit() {
     /* storage unavailable */
   }
   void httpPost("/settings", { jog_max_feed: rawCeiling() }).catch(() => {});
-  if (canRestartForFeed()) void startContinuous(active.direction, active.source, currentPlane(), currentFeed());
+  if (canRestartForFeed()) void startContinuous(active.vector, active.source, currentFeed());
 }
 
-function layoutHasPlaneAxes(plane) {
+function layoutHasAxes(vector) {
   const layout = state.driverLayout;
   if (!layout || !Array.isArray(layout.axes) || !layout.axes.length) return true;
-  return planeAxes(plane).every((axis) => layout.axes.includes(axis));
+  return ["X", "Y", "Z"].every((axis) => !vector[axis] || layout.axes.includes(axis));
 }
 
-// A finite long jog keeps the machine inside a bounded move even if the stop
-// packet is lost; normal release sends JogCancel (0x85) immediately.
-function continuousStep(direction, plane, feed) {
-  // Keep each accepted segment short so a missed JogCancel can only cause a
-  // small extra move; the rearm timer joins segments while the input is held.
-  const maxDistance = plane === "XY" ? 25 : 5;
-  const distance = Math.max(0.2, Math.min(maxDistance, (feed / 60) * 0.6));
+function mposValue(mpos, axis) {
+  const index = { X: 0, Y: 1, Z: 2 }[axis];
+  const parts = String(mpos || "").split(",");
+  const value = Number(parts[index]);
+  return Number.isFinite(value) ? value : null;
+}
+
+// Compute the remaining distance to the configured soft/travel bound.  The
+// command is sized so a lost JogCancel stops at the bound instead of moving
+// a fixed extra distance.  Axes already at their bound are dropped.
+function continuousStep(vector, feed, mpos = "--") {
+  const filtered = zeroVector();
+  const distances = [];
+  for (const axis of ["X", "Y", "Z"]) {
+    const sign = vector[axis];
+    if (!sign) continue;
+    const travel = Number(state.driverLayout?.axisTravel?.[axis]);
+    const soft = state.driverLayout?.axisSoft?.[axis] || {};
+    const hasSoft = Number.isFinite(Number(soft.max)) && Number.isFinite(Number(soft.min));
+    if (!hasSoft) {
+      // No firmware soft limit to stop a lost JogCancel; use the old bounded
+      // segment rather than running to the physical travel end.
+      distances.push(axis === "Z" ? 5 : 25);
+      filtered[axis] = sign;
+      continue;
+    }
+    const upper = Number(soft.max);
+    const lower = Number(soft.min);
+    const pos = mposValue(mpos, axis);
+    if (pos == null) {
+      distances.push(axis === "Z" ? 5 : 25);
+      filtered[axis] = sign;
+      continue;
+    }
+    const target = sign > 0 ? upper : lower;
+    const available = sign > 0 ? target - pos : pos - target;
+    if (available > 0.05) {
+      distances.push(available - 0.05);
+      filtered[axis] = sign;
+    }
+  }
+  if (!distances.length) return { command: "", durationMs: 0 };
+  const distance = Math.min(...distances);
+  const durationMs = Math.max(300, (distance / (feed / 60)) * 1000);
   return {
-    command: directionToJog(plane, direction, Number(distance.toFixed(2)), feed),
-    durationMs: Math.max(300, (distance / (feed / 60)) * 1000),
+    command: vectorToJog(filtered, Number(distance.toFixed(3)), feed),
+    durationMs,
   };
 }
 
@@ -199,44 +248,60 @@ function statusIsReady(text) {
   return /^<Idle/.test(String(text || "").trim());
 }
 
-async function machineIsReady() {
+async function machineSnapshot() {
   try {
     const snapshot = await getStatus();
-    return statusIsReady(snapshot.state);
+    return { ready: statusIsReady(snapshot.state), mpos: stateParts(snapshot.state).mpos };
   } catch {
-    return false;
+    return { ready: false, mpos: "--" };
   }
 }
 
-async function doStartContinuous(direction, source, plane, feed, rearm = false) {
-  if (!canMove() || !direction) return;
+async function confirmIdle(timeoutMs = 600) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      const snapshot = await getStatus();
+      if (statusIsReady(snapshot.state)) return true;
+      if (Date.now() >= deadline) return false;
+    } catch {
+      if (Date.now() >= deadline) return false;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+async function doStartContinuous(vector, source, feed, rearm = false) {
+  const revision = inputRevision;
+  if (!canMove() || vectorIsZero(vector)) return;
   if (!(feed > 0)) {
     status("速度必须大于 0", "bad");
     return;
   }
-  if (!layoutHasPlaneAxes(plane)) {
-    status(`${plane} 平面缺少轴配置`, "bad");
+  if (!layoutHasAxes(vector)) {
+    status("缺少轴配置", "bad");
     return;
   }
-  const step = continuousStep(direction, plane, feed);
-  if (!step.command) {
-    status("无效方向", "bad");
-    return;
-  }
+  let step = continuousStep(vector, feed, "--");
   if (active) {
     const stopped = await doStopContinuous("切换方向或输入源");
     if (!stopped) return;
+    // A newer input arrived while the switch stop was confirming; the latest
+    // vector will be started/replayed, never this stale one.
+    if (revision !== inputRevision) return;
   }
   const token = ++jogToken;
-  active = { direction, source, plane, feed, token };
+  active = { vector: { ...vector }, source, feed, token };
   stopPending = false;
   clearRearm();
-  status(`${source} ${directionLabel(plane, direction)} · ${Math.round(feed)} mm/min`, "warn2");
+  status(`${source} ${vectorLabel(vector)} · ${Math.round(feed)} mm/min`, "warn2");
   try {
     // Do not queue a jog behind homing/cycle/alarm.  This also makes the
     // start/stop intent abortable while the status query is in flight.
+    let ready = true;
     if (!rearm) {
-      const ready = await machineIsReady();
+      const snapshot = await machineSnapshot();
+      ready = snapshot.ready;
       if (jogToken !== token || !active || active.token !== token) return;
       if (stopRequested) {
         active = null;
@@ -248,6 +313,16 @@ async function doStartContinuous(direction, source, plane, feed, rearm = false) 
         status("机器不在 Idle，连续点动已拒绝", "bad");
         return;
       }
+      step = continuousStep(vector, feed, snapshot.mpos);
+      if (revision !== inputRevision) {
+        active = null;
+        return;
+      }
+    }
+    if (!step.command) {
+      active = null;
+      status("已到软限位/行程边界", "warn2");
+      return;
     }
     if (stopRequested) {
       active = null;
@@ -258,12 +333,7 @@ async function doStartContinuous(direction, source, plane, feed, rearm = false) 
       await jogStop().catch(() => {});
       return;
     }
-    status(`${source} ${directionLabel(plane, direction)} · 持续移动中`, "ok");
-    rearmTimer = setTimeout(() => {
-      if (canRestartForFeed() && active?.token === token) {
-        void startContinuous(active.direction, active.source, currentPlane(), currentFeed(), { rearm: true });
-      }
-    }, step.durationMs * 0.75);
+    status(`${source} ${vectorLabel(vector)} · 持续移动中`, "ok");
   } catch (e) {
     if (active?.token === token) active = null;
     await jogStop().catch(() => {});
@@ -282,10 +352,31 @@ async function doStopContinuous(reason = "松开", owner = null) {
   stopPending = true;
   try {
     await jogStop();
+    const idle = await confirmIdle();
+    if (!idle) {
+      // 0x85 is write-only over the live link; do not claim a confirmed stop
+      // until the controller actually reports Idle.
+      stopPending = true;
+      scheduleStopRetry();
+      status(`${reason} · 停止已发送，状态未确认`, "warn2");
+      return false;
+    }
     stopPending = false;
     stopRequested = false;
     clearStopRetry();
     status(`${reason} · 已停止`, "ok");
+    const pending = pendingStart;
+    pendingStart = null;
+    if (pending && enabled && state.connected) {
+      // Replay after the lock is released, only if the same input generation
+      // is still current and the window is still focused/visible.  A blur,
+      // page hide, disconnect or newer input must never restart old motion.
+      setTimeout(() => {
+        if (pending.revision !== inputRevision) return;
+        if (typeof document !== "undefined" && (document.hidden || !document.hasFocus())) return;
+        void startContinuous(pending.vector, pending.source, pending.feed, pending.options);
+      }, 0);
+    }
     return true;
   } catch (e) {
     active = saved;
@@ -296,14 +387,27 @@ async function doStopContinuous(reason = "松开", owner = null) {
   }
 }
 
-function startContinuous(direction, source, plane = currentPlane(), feed = currentFeed(), options = {}) {
+function startContinuous(vector, source, feed = currentFeed(), options = {}) {
+  inputRevision += 1;
+  if (stopPending) {
+    // Remember only the latest input.  The old vector must never be replayed
+    // after the operator has already released one of the axes.
+    pendingStart = { vector: { ...vector }, source, feed, options, revision: inputRevision };
+    status("停止确认中，暂不启动", "warn2");
+    return Promise.resolve({ skipped: true });
+  }
   stopRequested = false;
-  stopPending = false;
   clearStopRetry();
-  return serialized(() => doStartContinuous(direction, source, plane, feed, Boolean(options.rearm)));
+  return serialized(() => doStartContinuous(vector, source, feed, Boolean(options.rearm)));
+}
+
+function clearPendingStart(source = null) {
+  if (!pendingStart) return;
+  if (!source || pendingStart.source === source) pendingStart = null;
 }
 
 function stopContinuous(reason = "松开", owner = null) {
+  inputRevision += 1;
   // A no-handle poll or another input source must not cancel a start that
   // belongs to the current source.
   if (!owner || active?.source === owner) stopRequested = true;
@@ -312,9 +416,10 @@ function stopContinuous(reason = "松开", owner = null) {
 
 export async function stopDirectionJog() {
   heldKeys.clear();
-  virtualDirection = null;
+  virtualPressed.clear(); virtualStickPart = zeroVector(); virtualVector = zeroVector();
   virtualStickPointer = null;
   analogStickDirection = null;
+  pendingStart = null;
   resetGamepadHold();
   await stopContinuous("离开控制页");
 }
@@ -334,15 +439,22 @@ function setEnabled(next) {
     gamepadStabilizer(null);
     stickStabilizer(null);
     virtualStickPointer = null;
-    virtualDirection = null;
+    virtualPressed.clear(); virtualStickPart = zeroVector(); virtualVector = zeroVector();
     stopGamepadPoll();
     resetStickVisual();
+    pendingStart = null;
     void stopContinuous("禁用");
     status("方向键未启用", "warn2");
   } else {
     startGamepadPoll();
     status(state.connected ? "方向键已启用" : "等待连接设备", state.connected ? "ok" : "warn2");
   }
+}
+
+function heldKeyboardVector() {
+  const vector = zeroVector();
+  for (const part of heldKeys.values()) mergeVector(vector, part);
+  return vector;
 }
 
 function keyboardHandler(event) {
@@ -353,57 +465,91 @@ function keyboardHandler(event) {
   if (isTypingTarget(event.target)) return;
   const wasd = Boolean($("dpadWasd")?.checked);
   const keyId = event.key.length === 1 ? event.key.toLowerCase() : event.key;
-  const direction = keyboardDirection(keyId, { wasd });
-  if (!direction) return;
+  const part = keyboardVector(keyId, { wasd });
+  if (!part) return;
   event.preventDefault();
   if (event.repeat || heldKeys.has(keyId)) return;
-  heldKeys.set(keyId, direction);
-  void startContinuous(direction, "键盘");
+  heldKeys.set(keyId, part);
+  void startContinuous(heldKeyboardVector(), "键盘");
 }
 
 function keyboardRelease(event) {
   const keyId = event.key.length === 1 ? event.key.toLowerCase() : event.key;
   if (!heldKeys.has(keyId)) return;
   heldKeys.delete(keyId);
-  if (!heldKeys.size) {
+  const vector = heldKeyboardVector();
+  if (vectorIsZero(vector)) {
+    clearPendingStart("键盘");
     void stopContinuous("键盘松开", "键盘");
     return;
   }
-  // Another direction key is still held; switch to the most recent one.
-  const last = [...heldKeys.values()].pop();
-  if (last) {
-      void startContinuous(last, "键盘");
-  }
+  void startContinuous(vector, "键盘");
 }
 
-function virtualButtonDirection(event) {
-  const button = event.target.closest("[data-dir]");
-  return button ? button.dataset.dir : null;
+function virtualPart(target) {
+  const dir = target.closest?.("[data-dir]")?.dataset.dir;
+  if (dir === "left") return { X: -1 };
+  if (dir === "right") return { X: 1 };
+  if (dir === "up") return { Y: 1 };
+  if (dir === "down") return { Y: -1 };
+  const z = target.closest?.("[data-z]")?.dataset.z;
+  if (z === "+") return { Z: 1 };
+  if (z === "-") return { Z: -1 };
+  return null;
+}
+
+function virtualVectorNow() {
+  const vector = zeroVector();
+  for (const part of virtualPressed.values()) mergeVector(vector, part);
+  mergeVector(vector, virtualStickPart);
+  return vector;
+}
+
+function applyVirtualPresses() {
+  const vector = virtualVectorNow();
+  virtualVector = vector;
+  if (vectorIsZero(vector)) {
+    // No owner: a start from this virtual source may still be queued in the
+    // serialized command lock.  The unconditional stop sets stopRequested so
+    // that queued start aborts instead of running after the finger is released.
+    clearPendingStart("虚拟");
+    clearPendingStart("虚拟手柄");
+    void stopContinuous("虚拟松开");
+    return;
+  }
+  const source = virtualStickPointer ? "虚拟手柄" : "虚拟";
+  // The analog stick emits on every pointermove; only restart when the
+  // quantized axis vector or source actually changed.
+  if (active && active.source === source && vectorLabel(active.vector) === vectorLabel(vector)) return;
+  void startContinuous(vector, source);
 }
 
 function bindVirtualButtons() {
   const pad = $("dpadPad");
-  if (!pad) return;
-  pad.addEventListener("pointerdown", (event) => {
+  const zBox = $("dpadZ");
+  if (!pad && !zBox) return;
+  const onDown = (event) => {
     if (!enabled || !state.connected) return;
     if (event.button != null && event.button !== 0) return;
-    const direction = virtualButtonDirection(event);
-    if (!direction) return;
+    const part = virtualPart(event.target);
+    if (!part) return;
     event.preventDefault();
-    virtualDirection = direction;
-    const button = event.target.closest("[data-dir]");
-    button?.setPointerCapture?.(event.pointerId);
-    void startContinuous(direction, "虚拟");
-  });
-  const stop = () => {
-    if (!virtualDirection) return;
-    virtualDirection = null;
-    void stopContinuous("虚拟松开", "虚拟");
+    virtualPressed.set(event.pointerId, part);
+    event.target.setPointerCapture?.(event.pointerId);
+    applyVirtualPresses();
   };
-  pad.addEventListener("pointerup", stop);
-  pad.addEventListener("pointercancel", stop);
-  pad.addEventListener("pointerleave", stop);
-  pad.addEventListener("contextmenu", (event) => event.preventDefault());
+  const onUp = (event) => {
+    if (!virtualPressed.has(event.pointerId)) return;
+    virtualPressed.delete(event.pointerId);
+    applyVirtualPresses();
+  };
+  for (const root of [pad, zBox].filter(Boolean)) {
+    root.addEventListener("pointerdown", onDown);
+    root.addEventListener("pointerup", onUp);
+    root.addEventListener("pointercancel", onUp);
+    root.addEventListener("pointerleave", onUp);
+    root.addEventListener("contextmenu", (event) => event.preventDefault());
+  }
 }
 
 function gamepadStatus(text, kind = "") {
@@ -453,38 +599,27 @@ function pollGamepad() {
     return;
   }
   gamepadStatus(`手柄：${pad.id || "已连接"}`, "ok");
-  const button = gamepadButtonDirection(pad);
-  const rawStick = gamepadStickDirection(pad);
+  const digital = gamepadDigitalVector(pad);
+  const stick = gamepadStickVector(pad);
+  const vector = mergeGamepadVector(digital, stick);
   if (!gamepadArmed) {
     // Require a neutral sample after focus loss/reconnect so a held stick
     // cannot resume motion without a fresh user action.
-    if (!button && !rawStick) gamepadArmed = true;
+    if (!vector) gamepadArmed = true;
     return;
   }
-  if (button) {
+  if (!vector) {
     analogGamepadDirection = null;
-    gamepadStabilizer(null);
-    if (button !== lastGamepadButton) {
-      lastGamepadButton = button;
-      void startContinuous(button, "手柄");
-    }
+    lastGamepadButton = null;
+    clearPendingStart("手柄");
+    if (active?.source === "手柄") void stopContinuous("摇杆回中", "手柄");
     return;
   }
-  lastGamepadButton = null;
-  const raw = rawStick;
-  const stable = gamepadStabilizer(raw);
-  if (raw) {
-    if (stable) analogGamepadDirection = stable;
-  } else {
-    analogGamepadDirection = null;
-    gamepadStabilizer(null);
-  }
-  if (!analogGamepadDirection) {
-    void stopContinuous("摇杆回中", "手柄");
-    return;
-  }
-  if (analogGamepadDirection !== active?.direction || active?.source !== "手柄") {
-    void startContinuous(analogGamepadDirection, "手柄");
+  const key = vectorLabel(vector);
+  if (key !== lastGamepadButton || active?.source !== "手柄") {
+    lastGamepadButton = key;
+    analogGamepadDirection = key;
+    void startContinuous(vector, "手柄");
   }
 }
 
@@ -529,29 +664,15 @@ function bindVirtualStick() {
     event.preventDefault();
     const { dx, dy } = virtualStickVector(event, stick);
     updateStickVisual(dx, dy);
-    const raw = stickDirection(dx, dy);
-    const stable = stickStabilizer(raw);
-    if (raw) {
-      if (stable) analogStickDirection = stable;
-    } else {
-      analogStickDirection = null;
-      stickStabilizer(null);
-    }
-    if (!analogStickDirection) {
-      void stopContinuous("虚拟摇杆回中", "虚拟手柄");
-      return;
-    }
-    if (analogStickDirection !== active?.direction || active?.source !== "虚拟手柄") {
-      void startContinuous(analogStickDirection, "虚拟手柄");
-    }
+    virtualStickPart = stickVector(dx, dy) || zeroVector();
+    applyVirtualPresses();
   };
   const end = (event) => {
     if (!virtualStickPointer || event.pointerId !== virtualStickPointer) return;
     virtualStickPointer = null;
-    analogStickDirection = null;
-    stickStabilizer(null);
+    virtualStickPart = zeroVector();
     resetStickVisual();
-    void stopContinuous("虚拟摇杆松开", "虚拟手柄");
+    applyVirtualPresses();
     if (stick.hasPointerCapture?.(event.pointerId)) {
       try {
         stick.releasePointerCapture(event.pointerId);
@@ -568,13 +689,8 @@ function bindVirtualStick() {
     stick.setPointerCapture?.(event.pointerId);
     const { dx, dy } = virtualStickVector(event, stick);
     updateStickVisual(dx, dy);
-    const raw = stickDirection(dx, dy);
-    stickStabilizer(raw);
-    const stable = stickStabilizer(raw);
-    if (stable) {
-      analogStickDirection = stable;
-      void startContinuous(stable, "虚拟手柄");
-    }
+    virtualStickPart = stickVector(dx, dy) || zeroVector();
+    applyVirtualPresses();
   });
   stick.addEventListener("pointermove", move);
   stick.addEventListener("pointerup", end);
@@ -582,10 +698,9 @@ function bindVirtualStick() {
   stick.addEventListener("lostpointercapture", () => {
     const had = virtualStickPointer;
     virtualStickPointer = null;
-    analogStickDirection = null;
-    stickStabilizer(null);
+    virtualStickPart = zeroVector();
     resetStickVisual();
-    if (had) void stopContinuous("虚拟摇杆失联", "虚拟手柄");
+    if (had) applyVirtualPresses();
   });
 }
 
@@ -595,17 +710,6 @@ export function initDirectionControls() {
   const enable = $("dpadEnable");
   if (!enable) return;
   enable.addEventListener("change", () => setEnabled(enable.checked));
-  $("dpadPlane")?.addEventListener("change", () => {
-    lastGamepadButton = null;
-    analogGamepadDirection = null;
-    analogStickDirection = null;
-    gamepadStabilizer(null);
-    stickStabilizer(null);
-    virtualDirection = null;
-    heldKeys.clear();
-    void stopContinuous("切换平面");
-    syncFeedInputs();
-  });
   $("dpadFeed")?.addEventListener("input", () => {
     updateFeedLabel();
     // Re-arm the current segment with the new F after a short quiet period.
@@ -614,14 +718,14 @@ export function initDirectionControls() {
       clearTimeout(feedRestartTimer);
       feedRestartTimer = setTimeout(() => {
         feedRestartTimer = null;
-        if (canRestartForFeed()) void startContinuous(active.direction, active.source, currentPlane(), currentFeed());
+        if (canRestartForFeed()) void startContinuous(active.vector, active.source, currentFeed());
       }, 140);
     }
   });
   $("dpadFeed")?.addEventListener("change", () => {
     clearFeedRestart();
     updateFeedLabel();
-    if (canRestartForFeed()) void startContinuous(active.direction, active.source, currentPlane(), currentFeed());
+    if (canRestartForFeed()) void startContinuous(active.vector, active.source, currentFeed());
   });
   $("dpadMaxFeed")?.addEventListener("change", applyFeedLimit);
   $("dpadMaxFeed")?.addEventListener("input", () => {
@@ -632,8 +736,9 @@ export function initDirectionControls() {
   window.addEventListener("keydown", keyboardHandler);
   window.addEventListener("keyup", keyboardRelease);
   window.addEventListener("blur", () => {
+    pendingStart = null;
     heldKeys.clear();
-    virtualDirection = null;
+    virtualPressed.clear(); virtualStickPart = zeroVector(); virtualVector = zeroVector();
     virtualStickPointer = null;
     analogStickDirection = null;
     resetGamepadHold();
@@ -641,8 +746,9 @@ export function initDirectionControls() {
   });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
+      pendingStart = null;
       heldKeys.clear();
-        virtualDirection = null;
+        virtualPressed.clear(); virtualStickPart = zeroVector(); virtualVector = zeroVector();
       virtualStickPointer = null;
       analogStickDirection = null;
       resetGamepadHold();
@@ -650,12 +756,14 @@ export function initDirectionControls() {
     }
   });
   window.addEventListener("pagehide", () => {
+    pendingStart = null;
     void stopContinuous("页面关闭");
   });
   window.addEventListener("gamepadconnected", () => {
     if (enabled) gamepadStatus(`手柄：${gamepads()[0]?.id || "已连接"}`, "ok");
   });
   window.addEventListener("gamepaddisconnected", () => {
+    pendingStart = null;
     resetGamepadHold();
     void stopContinuous("手柄断开", "手柄");
     gamepadStatus("手柄：未连接");
@@ -666,6 +774,7 @@ export function initDirectionControls() {
       syncFeedInputs();
     }
     if (!state.connected) {
+      pendingStart = null;
       lastGamepadButton = null;
       analogGamepadDirection = null;
       analogStickDirection = null;

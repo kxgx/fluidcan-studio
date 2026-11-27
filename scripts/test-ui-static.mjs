@@ -13,7 +13,7 @@ const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]);
 for (const id of ids) {
   assert.equal(ids.filter((x) => x === id).length, 1, `duplicate id ${id}`);
 }
-for (const id of ["dualYBox", "dualYMsg", "driverTable", "fwDetailBox", "fwDriverTable", "fwRaw", "view-can", "dpadEnable", "dpadPlane", "dpadWasd", "dpadFeed", "dpadFeedValue", "dpadMaxFeed", "dpadFieldset", "dpadPad", "virtualStick", "stickKnob", "dpadStatus", "gamepadStatus", "appVersion"]) {
+for (const id of ["dualYBox", "dualYMsg", "driverTable", "fwDetailBox", "fwDriverTable", "fwRaw", "view-can", "dpadEnable", "dpadWasd", "dpadZ", "dpadFeed", "dpadFeedValue", "dpadMaxFeed", "dpadFieldset", "dpadPad", "virtualStick", "stickKnob", "dpadStatus", "gamepadStatus", "appVersion"]) {
   assert.ok(ids.includes(id), `missing id ${id}`);
 }
 

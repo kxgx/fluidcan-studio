@@ -949,7 +949,7 @@ dependencies = [
 
 [[package]]
 name = "fluidcan-studio"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "axum",
