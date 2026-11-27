@@ -6,6 +6,7 @@ import {
   allDriverAddresses,
   configAxisNames,
   driverMetaMap,
+  maxFeedForAxes,
   parseDriverLayout,
   parseLimitSwitches,
 } from "../ui/js/core/drivers.js";
@@ -62,6 +63,7 @@ assert.deepEqual(addressesForAxis(layout, "y"), [2, 3]);
 assert.deepEqual(addressesForAxis(layout, " x "), [1]);
 assert.deepEqual(allDriverAddresses(layout), [1, 2, 3, 4]);
 assert.deepEqual(configAxisNames(layout), ["X", "Y", "Z"]);
+assert.equal(maxFeedForAxes(layout, ["X", "Y"]), null);
 assert.equal(layout.overLimit, false);
 assert.deepEqual(layout.warnings, []);
 
@@ -93,6 +95,30 @@ assert.deepEqual(zdtLayout.protocols, ["zdt"]);
 assert.equal(zdtLayout.can.driverLabel, "ZDT");
 assert.equal(zdtLayout.drivers[0].protocol, "zdt");
 assert.deepEqual(zdtLayout.warnings, []);
+const feedLayout = parseDriverLayout(
+  parseConfigMap(`axes:
+  x:
+    max_rate_mm_per_min: 6000
+    motor0:
+      zdt:
+        address: 1
+  y:
+    max_speed_mm_per_min: 4500
+    motor0:
+      zdt:
+        address: 2
+  z:
+    max_speed_mm_per_min: 2000
+    motor0:
+      zdt:
+        address: 3
+`),
+);
+assert.deepEqual(feedLayout.axisLimits, { X: 6000, Y: 4500, Z: 2000 });
+assert.equal(maxFeedForAxes(feedLayout, ["X", "Y"]), 4500);
+assert.equal(maxFeedForAxes(feedLayout, ["X"]), 6000);
+assert.equal(maxFeedForAxes(feedLayout, []), null);
+assert.equal(maxFeedForAxes(feedLayout, ["A"]), null);
 
 // CANopen motor block is also recognized.
 const canopenLayout = parseDriverLayout(

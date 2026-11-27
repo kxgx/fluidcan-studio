@@ -64,6 +64,7 @@ export function parseDriverLayout(configMap) {
   const drivers = [];
   const axes = [];
   const protocols = [];
+  const axisLimits = {};
   const seen = new Map();
   const duplicates = [];
 
@@ -81,6 +82,8 @@ export function parseDriverLayout(configMap) {
       }
     }
     if (!motors.length) continue;
+    const limit = axisMaxFeed(axisNode);
+    if (limit != null) axisLimits[axis] = limit;
     axes.push(axis);
     motors.forEach((motor, index) => {
       const role = motors.length > 1 ? `${axis}${index}` : axis;
@@ -138,6 +141,7 @@ export function parseDriverLayout(configMap) {
     duplicates: [...new Set(duplicates)],
     outOfRange,
     protocols,
+    axisLimits,
     can: {
       driver: configuredDriver,
       driverLabel: configuredDriver ? protocolLabel(configuredDriver) : "",
@@ -149,6 +153,34 @@ export function parseDriverLayout(configMap) {
     // Limit switch wiring (read-only) for the limit test panel.
     limits: parseLimitSwitches(configMap),
   };
+}
+
+// Axis feed ceiling comes from config.yaml.  FluidNC accepts both the legacy
+// `max_rate_mm_per_min` and the human-readable `max_speed_mm_per_min`; rotary
+// axes use max_speed_deg_per_min.  Keep the value unit-neutral here: the
+// direction pad only uses X/Y/Z planes in mm/min.
+export function axisMaxFeed(axisNode) {
+  if (!axisNode || typeof axisNode !== "object") return null;
+  // Human-readable max_speed_* wins over the legacy max_rate_* aliases,
+  // matching Axis::afterParse/validate precedence.
+  const keys = ["max_speed_mm_per_min", "max_rate_mm_per_min", "max_speed_deg_per_min", "max_rate_deg_per_min"];
+  for (const key of keys) {
+    const value = Number(axisNode[key]);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return null;
+}
+
+export function maxFeedForAxes(layout, axes, missingAxisDefault = null) {
+  const limits = [];
+  let missing = false;
+  for (const axis of Array.isArray(axes) ? axes : []) {
+    const value = layout && layout.axisLimits ? Number(layout.axisLimits[String(axis).toUpperCase()]) : NaN;
+    if (Number.isFinite(value) && value > 0) limits.push(value);
+    else missing = true;
+  }
+  if (missing && Number.isFinite(missingAxisDefault) && missingAxisDefault > 0) limits.push(missingAxisDefault);
+  return limits.length ? Math.min(...limits) : null;
 }
 
 function isConfiguredPin(value) {

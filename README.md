@@ -6,7 +6,7 @@ Rust + Tauri 的 FluidNC CAN 调试、控制、配置与固件安装工具，面
 
 ![桌面 GUI](docs/gui.png)
 
-当前版本：`studio-v0.4.10`
+当前版本：`studio-v0.4.11`
 
 ## 功能
 
@@ -15,11 +15,11 @@ Rust + Tauri 的 FluidNC CAN 调试、控制、配置与固件安装工具，面
 - 总览：固件版本、状态、MPos、CAN 总线状态、驱动在线数量（分母来自 config.yaml 的驱动器数量）；不同协议只显示其支持的遥测
 - 通用 CAN 驱动表：地址、轴身份、协议、位置；PD42S1 额外显示误差/速度/运行/堵转/使能/到位，ZDT 位置格式单独解析，CANopen 预留
 - **固件信息**：FluidNC `$I` 完整输出、硬件变体，以及支持上报的 CAN 驱动实际固件/硬件版本（当前 ZDT 通过 `$CANDriverInfo` 的 0x1F 查询）；不支持上报的协议显示“未上报”
-- **速度控制**：方向键连续 jog 支持实时调速和 100–3000 mm/min 软件上限；上限在桌面 GUI/Android 也通过后端 `ui-settings.yaml` 持久化
+- **速度控制**：方向键连续 jog 支持实时调速；软件上限从 config.yaml 的轴 `max_speed`/`max_rate` 自动读取，桌面 GUI/Android 通过后端 `ui-settings.yaml` 持久化用户选择
 - CAN：`$CANStatus`、`$CANFaults`、`$CANPos`、`$CANDriverInfo`、`$CANScan`、`$CANAutoConfig`、`$CANReset`、`$CANLog`
 - CAN 配置面板：只读解析 config.yaml，按 can.driver 和每轴 motorN 的 pd42s1/zdt/canopen 块显示地址、协议字段、方向、速度/加速度/更新周期；警告协议混用、地址重复和方向不一致
 - 运动控制：点动、回零、解锁、使能/失能、工作坐标清零（G10 L20 P1）和驱动零位（$CANZero，按驱动协议清位置基准后自动坐标零）、任意命令；轴列表和 $CANZero 地址由 config.yaml 生成
-- **方向键 / 手柄连续控制**：默认关闭的虚拟 D-pad、键盘方向键（可选 WASD）、标准 Gamepad API 物理手柄和虚拟摇杆；按住连续移动、松开立即 JogCancel，速度滑杆 100–3000 mm/min，支持 XY/XZ/YZ 平面和摇杆死区
+- **方向键 / 手柄连续控制**：默认关闭的虚拟 D-pad、键盘方向键（可选 WASD）、标准 Gamepad API 物理手柄和虚拟摇杆；按住连续移动、松开立即 JogCancel，速度滑杆上限随 config.yaml 的轴速度上限自动变化，支持 XY/XZ/YZ 平面和摇杆死区
 - **限位开关测试（只读）**：轮询 `?` 状态中的 `Pn:` 触发位，配合 config.yaml 里的 limit_all/neg/pos 引脚显示各轴触发/释放，不会自动移动电机
 - 配置：读取/编辑/上传 `config.yaml`，上传前 YAML 语法检查
 - 远程仓库 OTA：从 GitHub Releases 读取 `can-vX.Y.Z`，固件安装页只让用户选择 WiFi / NoWiFi，Flash/PSRAM 由设备 `$I` 自动识别并选择对应结构化 zip；`can-v0.2.16+` 自动提取 `OTA/firmware.bin`；GitHub API 限流时回退 `releases.atom`
@@ -175,8 +175,8 @@ dist/FluidCAN-Studio-android-arm64.apk
 触发：
 
 ```powershell
-git tag studio-v0.4.10
-git push origin studio-v0.4.10
+git tag studio-v0.4.11
+git push origin studio-v0.4.11
 ```
 
 依赖的 Actions 使用当前最新大版本，包括：
@@ -270,7 +270,7 @@ GET /api/scan
 GET /api/firmware       # $I（快速，不等待 CAN）
 GET /api/firmware/drivers # $CANDriverInfo（后台慢报告）
 GET /api/settings       # { jog_max_feed }
-PUT /api/settings       # { jog_max_feed: 100..3000 }
+PUT /api/settings       # { jog_max_feed: 100..60000 }
 ```
 
 行为：
@@ -297,7 +297,7 @@ PUT /api/settings       # { jog_max_feed: 100..3000 }
 - **扫描**使用共享 HTTP 客户端、128 并发、600 ms 探测超时，通常 1 s 左右返回（原来约 7 s）；PC 有多个虚拟网卡时耗时取决于网段数量，有上次设备时会跳过启动扫描
 - **连接失败**探测超时 3 s（原来 20 s），填错地址可快速重试
 - 串口模式状态刷新同样只走快速状态命令；串口 `$CANDriverInfo` 单独放宽到 12 s，避免被控制台命令的 1.6 s 期限截断
-- **速度上限**保存到后端 `ui-settings.yaml`，桌面 GUI/Android 重启后仍生效；它只是 UI 软上限，固件 `max_speed`/`max_rate` 仍是硬上限
+- **速度上限**保存到后端 `ui-settings.yaml`，桌面 GUI/Android 重启后仍生效；UI 再按当前平面轴配置的 `max_speed`/`max_rate` 取最小值，固件轴上限仍是最终硬限制
 
 错误处理约定：
 
@@ -355,7 +355,7 @@ PUT /api/settings       # { jog_max_feed: 100..3000 }
 
 运动控制页的方向控制默认关闭，勾选“启用方向控制”后才生效；设备未连接时只显示等待，不会发送命令。
 
-连续控制使用短段 `$J` + FluidNC 实时 `0x85` JogCancel：按下开始，松开/失焦/切页立即取消；速度由方向控制卡的滑杆选择（100–3000 mm/min）。每段 jog 限制为 XY 25 mm / Z 5 mm，持续按住自动续接；网络断线时设备最多跑完当前短段。HTTP 模式经后端常驻 Telnet 实时通道（设备 23 端口）发送，串口模式直接写串口。
+连续控制使用短段 `$J` + FluidNC 实时 `0x85` JogCancel：按下开始，松开/失焦/切页立即取消；速度由方向控制卡的滑杆选择，滑杆上限按当前平面轴配置自动取最小值。每段 jog 限制为 XY 25 mm / Z 5 mm，持续按住自动续接；网络断线时设备最多跑完当前短段。HTTP 模式经后端常驻 Telnet 实时通道（设备 23 端口）发送，串口模式直接写串口。
 
 - 虚拟 D-pad：按住连续移动，松开 JogCancel。
 - 键盘：方向键；可选 WASD。按住连续移动，松开停止；输入框获得焦点时不拦截。

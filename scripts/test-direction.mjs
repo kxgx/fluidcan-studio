@@ -17,6 +17,8 @@ assert.equal(normalizePlane(" xz "), "XZ");
 assert.equal(normalizePlane("bogus"), "XY");
 assert.equal(clampFeed(500, 3000), 500);
 assert.equal(clampFeed(4000, 3000), 3000);
+assert.equal(clampFeed(4000, 6000), 4000);
+assert.equal(clampFeed(9000, 6000), 6000);
 assert.equal(clampFeed(4000, 1000), 1000);
 assert.equal(clampFeed(50, 3000), 100);
 assert.equal(clampFeed("bad", 3000), 500);

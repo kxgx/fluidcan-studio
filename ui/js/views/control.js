@@ -1,6 +1,6 @@
 import { exec } from "../core/transport.js";
 import { state } from "../core/store.js";
-import { addressesForAxis, allDriverAddresses, configAxisNames } from "../core/drivers.js";
+import { addressesForAxis, allDriverAddresses, configAxisNames, maxFeedForAxes } from "../core/drivers.js";
 
 const $ = (id) => document.getElementById(id);
 export const logLines = [];
@@ -112,7 +112,12 @@ export async function zeroAll() {
 export async function jog(direction) {
   const axis = $("jogAxis").value;
   const distance = parseFloat($("jogDist").value) || 1;
-  const feed = parseFloat($("jogFeed").value) || 500;
+  const input = $("jogFeed");
+  const cap = maxFeedForAxes(state.driverLayout, [axis]);
+  const requested = parseFloat(input?.value) || 500;
+  const feed = cap ? Math.min(requested, cap) : requested;
+  if (input) input.max = cap ? String(cap) : "";
+  if (feed !== requested) log(`点动进给 ${requested} 超过配置上限 ${cap}，已按 ${feed} 发送`, "warn2");
   await sendCommand(`$J=G91${axis}${direction * distance}F${feed}`);
 }
 

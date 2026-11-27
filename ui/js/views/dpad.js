@@ -1,4 +1,5 @@
 import { state, subscribe } from "../core/store.js";
+import { maxFeedForAxes } from "../core/drivers.js";
 import {
   clampFeed,
   directionLabel,
@@ -28,6 +29,8 @@ let stopRequested = false;
 let stopRetryTimer = null;
 let feedRestartTimer = null;
 let commandLock = Promise.resolve();
+let lastLayout = null;
+let rawMaxFeed = null;
 
 function serialized(fn) {
   const next = commandLock.then(fn, fn);
@@ -56,9 +59,42 @@ function currentPlane() {
   return normalizePlane($("dpadPlane")?.value);
 }
 
+function configMaxFeed() {
+  // The firmware defaults an axis with no max_speed/max_rate to 1000 mm/min.
+  const max = maxFeedForAxes(state.driverLayout, planeAxes(currentPlane()), 1000);
+  return Number.isFinite(max) && max > 0 ? max : 3000;
+}
+
+// rawMaxFeed is the operator's saved ceiling; currentMaxFeed is what the
+// current plane/config allows.  Keeping them separate means a low-cap plane
+// (e.g. XZ with Z=600) does not permanently overwrite a 5000 setting when the
+// user returns to XY or after a restart.
+function setRawMaxFeed(value) {
+  const raw = Number(value);
+  if (Number.isFinite(raw) && raw > 0) rawMaxFeed = Math.min(60000, Math.max(100, raw));
+}
+
+function rawCeiling() {
+  return Number.isFinite(rawMaxFeed) && rawMaxFeed > 0 ? rawMaxFeed : 3000;
+}
+
 function currentMaxFeed() {
-  const raw = parseFloat($("dpadMaxFeed")?.value);
-  return Number.isFinite(raw) ? Math.min(3000, Math.max(100, raw)) : 3000;
+  return clampFeed(Math.min(rawCeiling(), configMaxFeed()), configMaxFeed());
+}
+
+function syncFeedInputs() {
+  const cap = configMaxFeed();
+  const input = $("dpadMaxFeed");
+  const slider = $("dpadFeed");
+  if (input) {
+    input.max = String(cap);
+    input.value = String(currentMaxFeed());
+  }
+  if (slider) {
+    slider.max = String(cap);
+    slider.value = String(clampFeed(slider.value, cap));
+  }
+  updateFeedLabel();
 }
 
 function currentFeed() {
@@ -73,19 +109,25 @@ function updateFeedLabel() {
 }
 
 function applyFeedLimit() {
+  const input = $("dpadMaxFeed");
   const slider = $("dpadFeed");
+  if (input) setRawMaxFeed(input.value);
   const max = currentMaxFeed();
+  if (input) {
+    input.max = String(configMaxFeed());
+    input.value = String(max);
+  }
   if (slider) {
     slider.max = String(max);
     slider.value = String(clampFeed(slider.value, max));
   }
   updateFeedLabel();
   try {
-    localStorage.setItem("fluidcan.jogMaxFeed", String(max));
+    localStorage.setItem("fluidcan.jogMaxFeed", String(rawCeiling()));
   } catch {
     /* storage unavailable */
   }
-  void httpPost("/settings", { jog_max_feed: max }).catch(() => {});
+  void httpPost("/settings", { jog_max_feed: rawCeiling() }).catch(() => {});
   if (canRestartForFeed()) void startContinuous(active.direction, active.source, currentPlane(), currentFeed());
 }
 
@@ -562,6 +604,7 @@ export function initDirectionControls() {
     virtualDirection = null;
     heldKeys.clear();
     void stopContinuous("切换平面");
+    syncFeedInputs();
   });
   $("dpadFeed")?.addEventListener("input", () => {
     updateFeedLabel();
@@ -618,6 +661,10 @@ export function initDirectionControls() {
     gamepadStatus("手柄：未连接");
   });
   subscribe(() => {
+    if (state.driverLayout !== lastLayout) {
+      lastLayout = state.driverLayout;
+      syncFeedInputs();
+    }
     if (!state.connected) {
       lastGamepadButton = null;
       analogGamepadDirection = null;
@@ -630,9 +677,7 @@ export function initDirectionControls() {
   });
   try {
     const savedMax = Number(localStorage.getItem("fluidcan.jogMaxFeed"));
-    if (Number.isFinite(savedMax) && savedMax > 0 && $("dpadMaxFeed")) {
-      $("dpadMaxFeed").value = String(Math.min(3000, Math.max(100, savedMax)));
-    }
+    if (Number.isFinite(savedMax) && savedMax > 0) setRawMaxFeed(savedMax);
   } catch {
     /* storage unavailable */
   }
@@ -641,12 +686,12 @@ export function initDirectionControls() {
   void httpGet("/settings")
     .then((settings) => {
       const value = Number(settings.jog_max_feed);
-      if (Number.isFinite(value) && value > 0 && $("dpadMaxFeed")) {
-        $("dpadMaxFeed").value = String(Math.min(3000, Math.max(100, value)));
-        updateFeedLabel();
+      if (Number.isFinite(value) && value > 0) {
+        setRawMaxFeed(value);
+        syncFeedInputs();
       }
     })
     .catch(() => {});
-  updateFeedLabel();
+  syncFeedInputs();
   setEnabled(false);
 }

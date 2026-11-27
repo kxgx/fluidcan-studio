@@ -24,7 +24,8 @@ export function normalizePlane(value) {
 // only prevents a stored/typed jog value from exceeding the operator's chosen
 // software ceiling.
 export function clampFeed(value, max = 3000) {
-  const ceiling = Number.isFinite(Number(max)) ? Math.min(3000, Math.max(100, Number(max))) : 3000;
+  // No fixed 3000 cap: the ceiling comes from config.yaml via the caller.
+  const ceiling = Number.isFinite(Number(max)) ? Math.max(100, Number(max)) : 3000;
   const feed = Number(value);
   if (!Number.isFinite(feed) || feed <= 0) return 500;
   return Math.min(ceiling, Math.max(100, feed));

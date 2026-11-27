@@ -31,6 +31,11 @@ include!(concat!(env!("OUT_DIR"), "/toolchain_versions.rs"));
 
 const DEFAULT_DEVICE: &str = "";
 const DEFAULT_PORT: u16 = 8088;
+// The UI derives the real ceiling from the device's axis max_rate; this is
+// only the persistence/API bound so a config-derived value above the old
+// hard-coded 3000 can be stored.
+const JOG_MAX_FEED_MIN: u16 = 100;
+const JOG_MAX_FEED_MAX: u16 = 60_000;
 const GITHUB_REPO: &str = "kxgx/FluidNC";
 const GITHUB_API: &str = "https://api.github.com";
 
@@ -304,7 +309,7 @@ fn load_jog_max_feed() -> u16 {
                 .find_map(|line| line.trim().strip_prefix("jog_max_feed:"))
                 .and_then(|value| value.trim().parse::<u16>().ok())
         })
-        .map(|value| value.clamp(100, 3000))
+        .map(|value| value.clamp(JOG_MAX_FEED_MIN, JOG_MAX_FEED_MAX))
         .unwrap_or(3000)
 }
 
@@ -315,7 +320,13 @@ fn save_jog_max_feed(value: u16) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let _ = std::fs::write(path, format!("jog_max_feed: {}\n", value.clamp(100, 3000)));
+    let _ = std::fs::write(
+        path,
+        format!(
+            "jog_max_feed: {}\n",
+            value.clamp(JOG_MAX_FEED_MIN, JOG_MAX_FEED_MAX)
+        ),
+    );
 }
 
 async fn install_toolchain(State(st): State<Arc<AppState>>) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
@@ -341,8 +352,8 @@ async fn get_settings(State(st): State<Arc<AppState>>) -> Json<Value> {
 }
 
 async fn set_settings(State(st): State<Arc<AppState>>, Json(req): Json<UiSettingsReq>) -> Json<Value> {
-    if !(100..=3000).contains(&req.jog_max_feed) {
-        return Json(json!({"error": "jog_max_feed must be 100..3000"}));
+    if !(JOG_MAX_FEED_MIN..=JOG_MAX_FEED_MAX).contains(&req.jog_max_feed) {
+        return Json(json!({"error": format!("jog_max_feed must be {JOG_MAX_FEED_MIN}..{JOG_MAX_FEED_MAX}")}));
     }
     *st.jog_max_feed.write().await = req.jog_max_feed;
     save_jog_max_feed(req.jog_max_feed);
