@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 const modules = [
   "../ui/js/core/direction.js",
   "../ui/js/core/drivers.js",
+  "../ui/js/core/gamepad-source.js",
   "../ui/js/views/dpad.js",
 ];
 for (const path of modules) {

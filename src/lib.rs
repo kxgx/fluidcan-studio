@@ -91,6 +91,20 @@ struct WebFlashQuery {
     name: Option<String>,
 }
 
+/// Native backend gamepad state, normalized to the Web Gamepad "standard"
+/// layout so the browser UI can use it without per-OS mapping code.
+#[derive(Clone, Serialize, Default)]
+struct GamepadSnapshot {
+    available: bool,
+    connected: bool,
+    id: String,
+    axes: [f32; 4],
+    buttons: [bool; 17],
+}
+
+#[cfg(not(target_os = "android"))]
+mod gamepad;
+
 #[derive(Clone)]
 struct AppState {
     client: reqwest::Client,
@@ -111,6 +125,7 @@ struct AppState {
     driver_report_lock: Arc<tokio::sync::Mutex<()>>,
     live: Arc<Mutex<Option<TcpStream>>>,
     web_token: Option<String>,
+    gamepad: Arc<Mutex<GamepadSnapshot>>,
 }
 
 struct DriverReportCache {
@@ -2245,13 +2260,13 @@ async fn ui_css(AxPath(path): AxPath<String>) -> Response {
     ui_asset_named(format!("css/{path}")).await
 }
 
-fn build_state(web_token: Option<String>) -> Arc<AppState> {
+fn build_state(web_token: Option<String>, native_gamepad: bool) -> Arc<AppState> {
     let env_base = std::env::var("FLUIDCAN_DEVICE")
         .map(|value| normalize_base(&value))
         .unwrap_or_default();
     let saved_base = if env_base.is_empty() { load_last_device() } else { env_base.clone() };
     let active_base = env_base;
-    Arc::new(AppState {
+    let state = Arc::new(AppState {
         client: reqwest::Client::builder()
             .timeout(Duration::from_secs(25))
             .build()
@@ -2269,7 +2284,13 @@ fn build_state(web_token: Option<String>) -> Arc<AppState> {
         driver_report_lock: Arc::new(tokio::sync::Mutex::new(())),
         live: Arc::new(Mutex::new(None)),
         web_token,
-    })
+        gamepad: Arc::new(Mutex::new(GamepadSnapshot::default())),
+    });
+    if native_gamepad {
+        #[cfg(not(target_os = "android"))]
+        gamepad::start(state.gamepad.clone());
+    }
+    state
 }
 
 async fn web_auth(State(st): State<Arc<AppState>>, req: Request, next: Next) -> Response {
@@ -2300,9 +2321,15 @@ async fn web_auth(State(st): State<Arc<AppState>>, req: Request, next: Next) -> 
     resp
 }
 
+async fn get_gamepad(State(st): State<Arc<AppState>>) -> Json<GamepadSnapshot> {
+    let snapshot = st.gamepad.lock().map(|s| s.clone()).unwrap_or_default();
+    Json(snapshot)
+}
+
 fn build_router(state: Arc<AppState>) -> Router {
     let api = Router::new()
         .route("/health", get(health))
+        .route("/gamepad", get(get_gamepad))
         .route("/settings", get(get_settings).put(set_settings))
         .route("/toolchain", get(toolchain_info))
         .route("/toolchain/install", post(install_toolchain))
@@ -2345,11 +2372,11 @@ fn build_router(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
-fn start_server(bind: &str, token: Option<String>) -> anyhow::Result<u16> {
+fn start_server(bind: &str, token: Option<String>, native_gamepad: bool) -> anyhow::Result<u16> {
     let listener = std::net::TcpListener::bind(bind)?;
     listener.set_nonblocking(true)?;
     let port = listener.local_addr()?.port();
-    let state = build_state(token);
+    let state = build_state(token, native_gamepad);
     let app = build_router(state);
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
@@ -2435,7 +2462,7 @@ pub fn run_desktop() -> anyhow::Result<()> {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(make_token);
         let bind = format!("{host}:{port}");
-        let actual_port = start_server(&bind, Some(token.clone()))?;
+        let actual_port = start_server(&bind, Some(token.clone()), false)?;
         let url_host = if host == "0.0.0.0" { "127.0.0.1" } else { &host };
         let url = format!("http://{url_host}:{actual_port}/?token={token}");
         runtime_log(&format!("FluidCAN Studio web mode: {url}"));
@@ -2457,7 +2484,7 @@ pub fn run_desktop() -> anyhow::Result<()> {
 
     // Native GUI: start the embedded web backend on a loopback port, then
     // point a Tauri webview window at it.  The UI is exactly the same web UI.
-    let port = start_server("127.0.0.1:0", None)?;
+    let port = start_server("127.0.0.1:0", None, true)?;
     let url = format!("http://127.0.0.1:{port}/");
     runtime_log(&format!("FluidCAN Studio GUI: {url}"));
     let url_for_window = url.clone();
@@ -2485,7 +2512,7 @@ pub fn run_desktop() -> anyhow::Result<()> {
 #[cfg(target_os = "android")]
 #[tauri::mobile_entry_point]
 pub fn run_android() {
-    let port = start_server("127.0.0.1:0", None).expect("start embedded server");
+    let port = start_server("127.0.0.1:0", None, false).expect("start embedded server");
     let url = format!("http://127.0.0.1:{port}/");
     runtime_log(&format!("FluidCAN Studio Android: {url}"));
     let url_for_window = url.clone();

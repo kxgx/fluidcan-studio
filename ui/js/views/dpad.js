@@ -25,6 +25,7 @@ import {
   zeroVector,
 } from "../core/direction.js";
 import { getStatus, httpGet, httpPost, jogStart, jogStop } from "../core/transport.js";
+import { nativeGamepads, startNativeGamepadSource } from "../core/gamepad-source.js";
 
 const GAMEPAD_POLL_MS = 80;
 
@@ -559,9 +560,19 @@ function gamepadStatus(text, kind = "") {
   el.className = "sub" + (kind ? ` ${kind}` : "");
 }
 
-function gamepads() {
+function browserGamepads() {
   if (typeof navigator === "undefined" || typeof navigator.getGamepads !== "function") return [];
   return Array.from(navigator.getGamepads()).filter(Boolean);
+}
+
+function gamepads() {
+  const native = nativeGamepads();
+  if (native === null) return browserGamepads();
+  // Prefer the normalized native device.  If gilrs cannot see a particular
+  // controller, still let the WebView Gamepad API try it.
+  if (native.length) return native;
+  const browser = browserGamepads();
+  return browser.length ? browser : native;
 }
 
 function resetGamepadHold() {
@@ -707,6 +718,7 @@ function bindVirtualStick() {
 export function initDirectionControls() {
   if (initialized) return;
   initialized = true;
+  startNativeGamepadSource();
   const enable = $("dpadEnable");
   if (!enable) return;
   enable.addEventListener("change", () => setEnabled(enable.checked));
