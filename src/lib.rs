@@ -31,6 +31,8 @@ include!(concat!(env!("OUT_DIR"), "/toolchain_versions.rs"));
 
 const DEFAULT_DEVICE: &str = "";
 const DEFAULT_PORT: u16 = 8088;
+#[cfg(target_os = "android")]
+const ANDROID_GAMEPAD_PORT: u16 = 18088;
 // The UI derives the real ceiling from the device's axis max_rate; this is
 // only the persistence/API bound so a config-derived value above the old
 // hard-coded 3000 can be stored.
@@ -93,7 +95,7 @@ struct WebFlashQuery {
 
 /// Native backend gamepad state, normalized to the Web Gamepad "standard"
 /// layout so the browser UI can use it without per-OS mapping code.
-#[derive(Clone, Serialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 struct GamepadSnapshot {
     available: bool,
     connected: bool,
@@ -2290,6 +2292,10 @@ fn build_state(web_token: Option<String>, native_gamepad: bool) -> Arc<AppState>
         #[cfg(not(target_os = "android"))]
         gamepad::start(state.gamepad.clone());
     }
+    #[cfg(target_os = "android")]
+    if let Ok(mut snapshot) = state.gamepad.lock() {
+        snapshot.available = true;
+    }
     state
 }
 
@@ -2319,6 +2325,18 @@ async fn web_auth(State(st): State<Arc<AppState>>, req: Request, next: Next) -> 
         }
     }
     resp
+}
+
+#[cfg(target_os = "android")]
+async fn set_android_gamepad(
+    State(st): State<Arc<AppState>>,
+    Json(mut snapshot): Json<GamepadSnapshot>,
+) -> StatusCode {
+    snapshot.available = true;
+    if let Ok(mut current) = st.gamepad.lock() {
+        *current = snapshot;
+    }
+    StatusCode::NO_CONTENT
 }
 
 async fn get_gamepad(State(st): State<Arc<AppState>>) -> Json<GamepadSnapshot> {
@@ -2360,6 +2378,8 @@ fn build_router(state: Arc<AppState>) -> Router {
         // The in-app Web Serial flasher uploads a .bin for the browser to
         // download, so allow larger request bodies than the axum default.
         .layer(DefaultBodyLimit::max(MAX_WEB_FLASH_BYTES + 1024 * 1024));
+    #[cfg(target_os = "android")]
+    let api = api.route("/gamepad/android", post(set_android_gamepad));
 
     Router::new()
         .nest("/api", api)
@@ -2512,9 +2532,21 @@ pub fn run_desktop() -> anyhow::Result<()> {
 #[cfg(target_os = "android")]
 #[tauri::mobile_entry_point]
 pub fn run_android() {
-    let port = start_server("127.0.0.1:0", None, false).expect("start embedded server");
-    let url = format!("http://127.0.0.1:{port}/");
-    runtime_log(&format!("FluidCAN Studio Android: {url}"));
+    // Fixed port is convenient but must never make the app abort if another
+    // process already owns it.  The WebView URL carries both the actual port
+    // and a per-process token; the Kotlin bridge reads them from that URL.
+    let token = make_token();
+    let bind = format!("127.0.0.1:{ANDROID_GAMEPAD_PORT}");
+    let port = match start_server(&bind, Some(token.clone()), false) {
+        Ok(port) => port,
+        Err(e) => {
+            runtime_log(&format!("Android gamepad port {ANDROID_GAMEPAD_PORT} unavailable: {e}; using dynamic port"));
+            start_server("127.0.0.1:0", Some(token.clone()), false)
+                .expect("start embedded server")
+        }
+    };
+    let url = format!("http://127.0.0.1:{port}/?token={token}");
+    runtime_log(&format!("FluidCAN Studio Android: http://127.0.0.1:{port}/"));
     let url_for_window = url.clone();
     tauri::Builder::default()
         .setup(move |app| {
