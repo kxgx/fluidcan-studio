@@ -747,10 +747,22 @@ fn connect_live(host: &str) -> Result<TcpStream, String> {
         .map_err(|e| format!("解析设备地址失败: {e}"))?
         .next()
         .ok_or_else(|| "设备地址为空".to_string())?;
-    let stream = TcpStream::connect_timeout(&socket, Duration::from_secs(3))
+    let mut stream = TcpStream::connect_timeout(&socket, Duration::from_secs(3))
         .map_err(|e| format!("连接设备实时通道失败: {e}"))?;
     stream.set_write_timeout(Some(Duration::from_secs(3))).ok();
     stream.set_nodelay(true).ok();
+    // Drain the Telnet greeting/initial messages.  Otherwise the next
+    // wait-for-ok could mistake an old greeting line for the command reply.
+    stream.set_read_timeout(Some(Duration::from_millis(80))).ok();
+    let mut drain = [0u8; 512];
+    loop {
+        match stream.read(&mut drain) {
+            Ok(0) => break,
+            Ok(_) => continue,
+            Err(_) => break,
+        }
+    }
+    stream.set_read_timeout(Some(Duration::from_millis(1500))).ok();
     Ok(stream)
 }
 
@@ -802,6 +814,114 @@ async fn send_device_live(
     Ok(())
 }
 
+// Send a line and wait for its `ok`.  A realtime JogCancel sent immediately
+// after `$J` can be processed before the line parser accepts the jog, leaving
+// a long jog running.  Waiting for `ok` makes start/stop ordering explicit.
+async fn send_device_live_wait_ok(
+    st: &AppState,
+    bytes: &[u8],
+    label: &str,
+    mode: Option<&str>,
+) -> Result<(), String> {
+    let use_serial = match mode {
+        Some("serial") => true,
+        Some("http") => false,
+        _ => device_is_serial(st),
+    };
+    if use_serial {
+        let start = st.serial_log.lock().unwrap().len();
+        send_device_live(st, bytes, label, mode).await?;
+        let deadline = Instant::now() + Duration::from_millis(1600);
+        loop {
+            let lines = {
+                let log = st.serial_log.lock().unwrap();
+                log.iter().skip(start).cloned().collect::<Vec<_>>()
+            };
+            for line in &lines {
+                if let Some(rest) = line.strip_prefix("< ") {
+                    let rest = rest.trim();
+                    if rest == "ok" {
+                        return Ok(());
+                    }
+                    if rest.contains("error:") || rest.starts_with("ALARM:") {
+                        return Err(format!("设备拒绝点动: {rest}"));
+                    }
+                }
+            }
+            if Instant::now() >= deadline {
+                return Err("等待串口点动 ok 超时".to_string());
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+    let base = st.base.read().await.clone();
+    let host = reqwest::Url::parse(&base)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string))
+        .unwrap_or_default();
+    if host.is_empty() {
+        return Err("设备未连接或地址无效".to_string());
+    }
+    let mut guard = st.live.lock().unwrap();
+    if guard.is_none() {
+        *guard = Some(connect_live(&host)?);
+    }
+    let mut stream = guard.take().ok_or_else(|| "实时通道未建立".to_string())?;
+    if stream.write_all(bytes).is_err() {
+        stream = connect_live(&host)?;
+        stream
+            .write_all(bytes)
+            .map_err(|e| format!("实时通道写入失败: {e}"))?;
+    }
+    stream.flush().ok();
+
+    let mut pending = Vec::new();
+    let mut buf = [0u8; 512];
+    loop {
+        match stream.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                pending.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&pending);
+                let mut saw_ok = false;
+                let mut saw_error = false;
+                for line in text.split(|c| c == '\n' || c == '\r') {
+                    let line = line.trim();
+                    if line == "ok" {
+                        saw_ok = true;
+                    } else if line.starts_with("error:") {
+                        saw_error = true;
+                    }
+                }
+                if saw_error {
+                    *guard = None;
+                    st.serial_log.lock().unwrap().push(label.to_string());
+                    return Err(format!("设备拒绝点动: {}", text.trim()));
+                }
+                if saw_ok {
+                    *guard = Some(stream);
+                    st.serial_log.lock().unwrap().push(label.to_string());
+                    return Ok(());
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
+                // A late ack must not be mistaken for the next command's ack.
+                *guard = None;
+                st.serial_log.lock().unwrap().push(label.to_string());
+                return Err("等待点动 ok 超时".to_string());
+            }
+            Err(e) => {
+                *guard = None;
+                st.serial_log.lock().unwrap().push(label.to_string());
+                return Err(format!("实时通道读取失败: {e}"));
+            }
+        }
+    }
+    *guard = None;
+    st.serial_log.lock().unwrap().push(label.to_string());
+    Err("实时通道已断开".to_string())
+}
+
 async fn jog_start(
     State(st): State<Arc<AppState>>,
     Json(req): Json<JogStartReq>,
@@ -812,7 +932,7 @@ async fn jog_start(
     }
     let mut line = command.into_bytes();
     line.push(b'\n');
-    send_device_live(
+    send_device_live_wait_ok(
         &st,
         &line,
         "> continuous jog start",

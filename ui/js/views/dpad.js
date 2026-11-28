@@ -359,8 +359,14 @@ async function doStartContinuous(vector, source, feed, rearm = false) {
     }
     status(`${source} ${vectorLabel(vector)} · 持续移动中`, "ok");
   } catch (e) {
-    if (active?.token === token) active = null;
-    await jogStop().catch(() => {});
+    // A failed start may still have a long jog in flight; use the same
+    // stop/confirm/retry path as a normal release instead of a single raw
+    // JogCancel that can be ignored before the jog starts.
+    if (active?.token === token) {
+      await doStopContinuous("点动启动失败");
+    } else {
+      await jogStop().catch(() => {});
+    }
     status(`方向键失败: ${String(e)}`, "bad");
   }
 }
