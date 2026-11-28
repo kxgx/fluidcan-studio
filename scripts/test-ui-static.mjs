@@ -291,9 +291,10 @@ console.log("static UI tests: PASS");
 // Mobile landscape layout must stay wired.
 {
   const manifest = fs.readFileSync(path.join(root, "gen/android/app/src/main/AndroidManifest.xml"), "utf8");
-  assert.ok(manifest.includes('android:screenOrientation="sensorLandscape"'), "Android must lock landscape");
+  assert.ok(!manifest.includes("screenOrientation"), "Android must not force landscape");
   const css = fs.readFileSync(path.join(root, "ui/css/app.css"), "utf8");
   assert.ok(css.includes("@media (orientation: landscape) and (max-height: 600px)"), "landscape CSS missing");
+  assert.ok(css.includes("@media (orientation: portrait) and (max-width: 900px)"), "portrait CSS missing");
   const html = fs.readFileSync(path.join(root, "ui/index.html"), "utf8");
   assert.ok(html.includes("control-main") && html.includes("control-dpad"), "control cards need mobile classes");
 }

@@ -175,4 +175,83 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
   #lumenTestRows .lumen-result { max-width: 180px; }
   #lumenOut { max-height: 120px; }
 }
+/* Mobile portrait.  Orientation is intentionally not locked: this layout is
+   the default phone experience and landscape keeps the compact rules above. */
+@media (orientation: portrait) and (max-width: 900px) {
+  body { font-size: 13px; }
+  header {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 4px;
+    padding: 5px 7px;
+    scrollbar-width: thin;
+  }
+  header .brand { font-size: 16px; margin-right: 2px; flex: 0 0 auto; white-space: nowrap; }
+  header .tag, #clock, #appVersion, #serialPorts, #openSerialBtn { display: none; }
+  header input, header select, header button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding: 5px 7px;
+    font-size: 11px;
+    border-radius: 7px;
+  }
+  header input#deviceUrl { width: 145px !important; }
+  header select#scanResults { width: 135px !important; }
+  header #scanMsg, header #connPill { font-size: 10px; padding: 2px 6px; white-space: nowrap; }
+  .layout { flex-direction: column; }
+  nav {
+    width: auto;
+    flex: 0 0 auto;
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    padding: 3px 4px;
+  }
+  nav button {
+    width: auto;
+    flex: 0 0 auto;
+    margin: 2px;
+    padding: 7px 9px;
+    font-size: 12px;
+    text-align: center;
+    white-space: nowrap;
+  }
+  main { padding: 8px 10px; }
+  h1 { font-size: 19px; }
+  h2 { font-size: 15px; margin: 12px 0 6px; }
+  .sub { font-size: 11px; margin-bottom: 10px; }
+  .card { padding: 10px; border-radius: 10px; }
+  .card h3 { font-size: 11px; }
+  .row { gap: 6px; margin: 6px 0; }
+  .row label { font-size: 11px; }
+  button, input, select { padding: 6px 8px; font-size: 12px; }
+  .pill { font-size: 11px; padding: 3px 8px; }
+  .grid, .split { grid-template-columns: 1fr; gap: 8px; }
+  pre { max-height: 260px; padding: 8px; font-size: 11px; }
+  textarea.code { min-height: 320px; padding: 8px; font-size: 12px; }
+  table { font-size: 12px; }
+  th, td { padding: 5px 6px; }
+  .dpad-fieldset { padding: 8px; margin: 8px 0 2px; }
+  .dpad-layout { flex-wrap: wrap; justify-content: center; gap: 12px; }
+  .dpad { width: 140px; height: 140px; flex: 0 0 140px; gap: 4px; }
+  .dpad-btn { font-size: 18px; }
+  .virtual-stick { width: 116px; height: 116px; }
+  .stick-knob { width: 38px; height: 38px; margin: -19px 0 0 -19px; }
+  .dpad-z button { min-width: 96px; padding: 8px 10px; font-size: 13px; }
+  #view-control.active { display: flex; flex-direction: column; }
+  #view-control.active > h1 { order: 1; }
+  #view-control.active > .sub { order: 2; }
+  #view-control.active > .control-dpad { order: 3; }
+  #view-control.active > .control-main { order: 4; }
+  #view-control.active > .control-limits { order: 5; }
+  #view-control.active > h2 { order: 6; }
+  #view-control.active > pre { order: 7; }
+  .lumen-grid { grid-template-columns: 1fr; gap: 8px; }
+  #lumenTestRows .lumen-result { max-width: 150px; }
+  #lumenOut { max-height: 180px; }
+}
 
