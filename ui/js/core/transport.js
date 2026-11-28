@@ -116,7 +116,9 @@ export async function execChecked(command) {
   const j = await execRaw(command);
   const text = String(j.text || "");
   if (j.ok === false || /(^|\n)\s*(?:error:|ALARM:)/i.test(text)) {
-    throw new Error(text.trim() || "设备命令失败");
+    const err = new Error(j.timeout ? "设备命令超时" : (text.trim() || "设备命令失败"));
+    err.timeout = Boolean(j.timeout);
+    throw err;
   }
   return text;
 }

@@ -1,4 +1,5 @@
 import { currentHttpBase, currentMode, currentSerial, getDeviceConfig, httpPut } from "../core/transport.js";
+import { patch } from "../core/store.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -66,7 +67,13 @@ export async function saveConfig() {
   $("cfgMsg").textContent = "上传中...";
   try {
     const j = await httpPut("/config", { yaml, expected_base: expectedBase });
-    $("cfgMsg").textContent = "上传成功，请重启";
+    // The uploaded YAML is not active until the controller restarts, and it may
+    // have removed the lumen: section.  Invalidate the cached config gate so
+    // G28 cannot be authorized from the previous config.
+    patch({ driverLayout: null, lumenConfigured: false });
+    configLoaded = false;
+    configLoadedFor = "";
+    $("cfgMsg").textContent = "上传成功，请重启并重新读取配置后再执行 G28";
     return j;
   } catch (e) {
     $("cfgMsg").textContent = "上传失败";

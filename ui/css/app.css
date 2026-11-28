@@ -447,4 +447,66 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
   #view-control.active > h2 { order: 6; }
   #view-control.active > pre { order: 7; }
 }
+/* =====================================================================
+   Lumen page layout: deliberate sections instead of auto-fit card soup.
+   ===================================================================== */
+.lumen-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, .85fr);
+  grid-template-areas:
+    "tests     vacuum"
+    "outputs   led"
+    "outputs   jog"
+    "outputs   g28"
+    "log       log";
+  gap: 12px;
+  align-items: start;
+}
+.lumen-tests { grid-area: tests; }
+.lumen-vacuum { grid-area: vacuum; }
+.lumen-outputs { grid-area: outputs; }
+.lumen-led { grid-area: led; }
+.lumen-jog { grid-area: jog; }
+.lumen-g28 { grid-area: g28; }
+.lumen-log { grid-area: log; }
+.lumen-grid .card { min-width: 0; }
+.lumen-tests table { table-layout: auto; }
+.lumen-tests .lumen-result { max-width: none; white-space: normal; overflow-wrap: anywhere; }
+.lumen-outputs table { width: 100%; }
+.lumen-log pre { max-height: 220px; }
+
+@media (max-width: 1100px) and (min-height: 601px) {
+  .lumen-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas: "tests" "vacuum" "outputs" "led" "jog" "g28" "log";
+  }
+}
+
+@media (orientation: landscape) and (max-height: 600px) and (max-width: 1100px) {
+  .lumen-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      "tests   vacuum"
+      "outputs led"
+      "outputs jog"
+      "outputs g28"
+      "log     log";
+    gap: 8px;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 600px) and (max-width: 820px) {
+  .lumen-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas: "tests" "vacuum" "outputs" "led" "jog" "g28" "log";
+  }
+}
+
+@media (orientation: portrait) and (max-width: 900px) {
+  .lumen-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas: "tests" "vacuum" "outputs" "led" "jog" "g28" "log";
+    gap: 10px;
+  }
+}
 

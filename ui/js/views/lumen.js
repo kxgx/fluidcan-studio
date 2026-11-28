@@ -5,7 +5,7 @@
 // never triggered automatically by loading this view.
 import { exec, execChecked } from "../core/transport.js";
 import { state, subscribe } from "../core/store.js";
-import { maxFeedForAxes } from "../core/drivers.js";
+import { configAxisNames, maxFeedForAxes } from "../core/drivers.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -66,7 +66,42 @@ function requireConnected() {
   if (!state.connected) throw new Error("设备未连接");
 }
 
+function buildVersion(build) {
+  const match = String(build || "").match(/can-v(\d+)\.(\d+)\.(\d+)/i);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+export function supportsLumenG28(build) {
+  const version = buildVersion(build);
+  if (!version) return false;
+  const [major, minor, patch] = version;
+  return major > 0 || (major === 0 && (minor > 2 || (minor === 2 && patch >= 36)));
+}
+
+async function requireG28Firmware() {
+  // Read $I live instead of trusting state.build: an in-app OTA can downgrade
+  // the controller without reconnecting the UI.
+  const build = await exec("$I");
+  const version = buildVersion(build);
+  if (!supportsLumenG28(build)) {
+    const shown = version ? version.join(".") : (String(build || "").trim() || "未知");
+    throw new Error(`G28 回零需要 can-v0.2.36+ 固件（当前 ${shown}）；旧固件 G28 是 FluidNC 原生移动，不是 Marlin 回零`);
+  }
+  if (!state.lumenConfigured) {
+    throw new Error("当前 config.yaml 不含 lumen: 段；G28 会走 FluidNC 原生预置点移动，已拒绝");
+  }
+}
+
+async function ensureHomingAllowed() {
+  const status = String(await exec("?")).trim();
+  if (!/^<(Idle|Alarm)/.test(status)) {
+    throw new Error(`当前状态不允许回零: ${status || "未知"}`);
+  }
+}
+
 let lumenCompat = null;
+let lastLumenBuild = "";
 let actionBusy = false;
 let vacuumBusy = false;
 
@@ -281,6 +316,77 @@ function lumenJogConfig() {
   return { axis, amount, feed, limit };
 }
 
+const MOTION_COMMANDS = new Set(["?", "M114", "$X", "$ME", "$MD"]);
+
+export function motionCommand(command) {
+  const value = String(command || "").trim().toUpperCase();
+  if (!MOTION_COMMANDS.has(value)) throw new Error("不支持的运动测试命令");
+  return value;
+}
+
+export async function lumenMotion(command) {
+  return withActionBusy(async () => {
+    const cmd = motionCommand(command);
+    const readOnly = cmd === "?" || cmd === "M114";
+    if (!readOnly && !confirm(`发送运动测试命令 ${cmd}？\n\n这会改变电机/报警状态，请确认运动范围和急停方式。`)) return;
+    setStatus(`${cmd} 发送中…`, "warn2");
+    try {
+      // $X is FluidNC's native alarm unlock; M115 is rejected while in Alarm,
+      // so the unlock path must not depend on the Lumen gcode gate.
+      if (!readOnly && cmd !== "$X") await requireLumen();
+      const text = await send(cmd);
+      setStatus(`${cmd} ${readOnly ? "读取完成" : "完成"}`, "ok");
+      append(`${cmd} 返回: ${String(text).trim() || "ok"}`);
+    } catch (e) {
+      setStatus(String(e), "bad");
+      throw e;
+    }
+  });
+}
+
+export function g28Command(axes = "") {
+  const suffix = String(axes || "").trim().toUpperCase();
+  if (!suffix) return "G28";
+  if (!/^[XYZ]+$/.test(suffix) || new Set(suffix).size !== suffix.length) {
+    throw new Error("G28 轴只允许不重复的 X/Y/Z");
+  }
+  return `G28 ${suffix}`;
+}
+
+export async function lumenG28(axes = "") {
+  return withActionBusy(async () => {
+    const command = g28Command(axes);
+    const suffix = String(axes || "").trim().toUpperCase();
+    if (!confirm(`执行 ${command} 回零？\n\n这会移动 ${suffix || "全部 X/Y/Z"} 轴；\n请确认运动范围无人和障碍物，异常时立即停止/断电。`)) return;
+    setStatus(`${command} 回零中…`, "warn2");
+    try {
+      // G28's Marlin semantics are version-gated; M115 itself is rejected in
+      // Alarm, and Alarm is exactly when the user may legitimately need G28.
+      await requireG28Firmware();
+      if (suffix) {
+        const layout = state.driverLayout;
+        const names = Array.isArray(layout?.axes) ? layout.axes.map((a) => String(a).toUpperCase()) : [];
+        for (const axis of suffix) {
+          if (!names.includes(axis)) throw new Error(`config 中没有 ${axis} 轴`);
+        }
+      }
+      await ensureHomingAllowed();
+      const text = await send(command);
+      append(`G28 返回: ${String(text).trim() || "ok"}`);
+      setStatus(`${command} 完成`, "ok");
+    } catch (e) {
+      const message = String(e);
+      if (e?.timeout || /超时|timeout|timed out/i.test(message)) {
+        append("G28 超时：固件可能仍在回零。请等待状态变为 Idle，异常时急停/断电；不要立即重复发送。");
+        setStatus("G28 超时，请检查状态后再操作", "bad");
+      } else {
+        setStatus(message, "bad");
+      }
+      throw e;
+    }
+  });
+}
+
 export async function lumenJog(sign) {
   return withActionBusy(async () => {
     const { axis, amount, feed } = lumenJogConfig();
@@ -307,11 +413,30 @@ export function initLumen() {
   const feed = $("lumenJogFeed");
   if (!axis || !amount || !feed || axis.dataset.ready === "1") return;
   axis.dataset.ready = "1";
+
+  const syncAxes = () => {
+    const configured = configAxisNames(state.driverLayout).map((a) => String(a).toUpperCase());
+    const defaults = ["X", "Y", "Z", "A", "B"];
+    const options = configured.length ? configured : defaults;
+    const previous = String(axis.value || "").toUpperCase();
+    if ([...axis.options].map((o) => o.value).join(",") !== options.join(",")) {
+      axis.replaceChildren(...options.map((a) => {
+        const option = document.createElement("option");
+        option.value = a;
+        option.textContent = a;
+        return option;
+      }));
+    }
+    const preferred = options.includes(previous) ? previous : options.includes("Z") ? "Z" : options[0];
+    axis.value = preferred;
+  };
+
   const sync = () => {
+    syncAxes();
     const a = String(axis.value || "Z").toUpperCase();
     const rotary = a === "A" || a === "B";
     amount.title = rotary ? "角度（°）" : "距离（mm）";
-    amount.value = rotary ? "1" : "1";
+    amount.value = "1";
     const cap = maxFeedForAxes(state.driverLayout, [a]);
     const limit = Number.isFinite(cap) && cap > 0 ? cap : 1000;
     feed.max = String(limit);
@@ -320,7 +445,10 @@ export function initLumen() {
   axis.addEventListener("change", sync);
   let lastLayout = null;
   subscribe(() => {
-    if (!state.connected) lumenCompat = null;
+    if (!state.connected || state.build !== lastLumenBuild) {
+      lumenCompat = null;
+      lastLumenBuild = state.build;
+    }
     if (state.driverLayout !== lastLayout) {
       lastLayout = state.driverLayout;
       sync();

@@ -16,6 +16,10 @@ export const state = {
   // Parsed from config.yaml after connecting: drivers/axes/address list and the
   // CAN address capacity.  null until a successful /config read.
   driverLayout: null,
+  // True only when the parsed device config.yaml contains a lumen: section.
+  // G28's Marlin semantics need this section; firmware version alone is not
+  // enough if the user restored an old/lumen-less config.
+  lumenConfigured: false,
   lastUpdate: "",
 };
 

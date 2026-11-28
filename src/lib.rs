@@ -235,12 +235,27 @@ fn normalize_base(url: &str) -> String {
     s.trim_end_matches('/').to_string()
 }
 
+fn is_homing_command(command: &str) -> bool {
+    let command = command.trim().to_ascii_uppercase();
+    let compact: String = command.chars().filter(|c| !c.is_whitespace()).collect();
+    // G28/G28X/G28 X/Y/Z, $H and $HX/$HY/$HZ all block until the homing cycle
+    // finishes, so they need the long timeout too.
+    compact.starts_with("G28") || command.starts_with("$H")
+}
+
 async fn device_command(
     client: &reqwest::Client,
     base: &str,
     command: &str,
 ) -> Result<String, String> {
-    device_command_timeout(client, base, command, Duration::from_secs(20)).await
+    // G28 is a blocking homing cycle.  A full X/Y/Z home can legitimately take
+    // well over the normal 20 s console timeout, especially after a long move.
+    let timeout = if is_homing_command(command) {
+        Duration::from_secs(180)
+    } else {
+        Duration::from_secs(20)
+    };
+    device_command_timeout(client, base, command, timeout).await
 }
 
 async fn device_command_timeout(
@@ -979,6 +994,8 @@ async fn serial_exec(
     // populated bus; do not truncate it at the normal console-command deadline.
     let timeout_ms = if req.command.trim().eq_ignore_ascii_case("$CANDriverInfo") {
         12000
+    } else if is_homing_command(&req.command) {
+        180_000
     } else {
         1600
     };
@@ -1002,6 +1019,7 @@ async fn serial_exec(
             return Ok(Json(json!({
                 "text": text.join("\n"),
                 "ok": done,
+                "timeout": !done,
             })));
         }
         tokio::time::sleep(Duration::from_millis(25)).await;

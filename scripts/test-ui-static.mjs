@@ -298,6 +298,12 @@ console.log("static UI tests: PASS");
   const html = fs.readFileSync(path.join(root, "ui/index.html"), "utf8");
   assert.ok(html.includes("control-main") && html.includes("control-dpad"), "control cards need mobile classes");
   assert.ok(html.includes('class="hdr-status"'), "header status group missing");
+  assert.ok(html.includes("lumenG28(") && html.includes("lumenMotion("), "Lumen G28/motion wiring missing");
+  assert.ok(app.includes("lumenG28") && app.includes("lumenMotion"), "Lumen G28/motion app export missing");
+  assert.ok(app.includes("lumenConfigured"), "Lumen config gate wiring missing");
+  assert.ok(app.includes('lumenConfigured: Boolean(configMap && configMap.lumen'), "Lumen config success path missing");
+  const configView = fs.readFileSync(path.join(root, "ui/js/views/config.js"), "utf8");
+  assert.ok(configView.includes("lumenConfigured: false"), "config upload must invalidate lumen gate");
   assert.ok(css.includes("and (max-width: 1100px)"), "mobile landscape width guard missing");
 }
 

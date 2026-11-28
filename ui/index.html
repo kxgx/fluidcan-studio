@@ -174,21 +174,21 @@
     <h1>LumenPnP 兼容</h1><div class="sub">只读测试、真空、泵阀、灯光、Z/A/B；动作必须逐个确认</div>
     <div class="row"><span id="lumenStatus" class="pill warn2">未连接</span><button onclick="clearLumenOut()">清空输出</button></div>
     <div class="lumen-grid">
-      <div class="card">
+      <div class="card lumen-tests">
         <h3>只读兼容测试</h3>
         <div class="row"><button class="primary" id="lumenTestBtn" onclick="runLumenReadOnlyTests()">运行只读测试</button><span class="sub" style="margin:0">不启动运动或输出</span></div>
         <div class="sub" style="margin-top:6px">顺序发送 $I / ? / M114 / M115 / $CANStatus / $CANPos</div>
         <table><thead><tr><th>测试</th><th>命令</th><th>状态</th><th>返回</th></tr></thead><tbody id="lumenTestRows"><tr><td colspan="4" class="muted">点击“运行只读测试”开始</td></tr></tbody></table>
       </div>
 
-      <div class="card">
+      <div class="card lumen-vacuum">
         <h3>真空传感器</h3>
         <div class="row"><button id="lumenVac1Btn" onclick="readVacuum(1)">读 VAC1</button><span>VAC1 = <b id="lumenVac1" class="mono">--</b></span></div>
         <div class="row"><button id="lumenVac2Btn" onclick="readVacuum(2)">读 VAC2</button><span>VAC2 = <b id="lumenVac2" class="mono">--</b></span></div>
         <div class="sub">原版 machine.xml 序列：M260 A112 Bn S1 → M260 A109 B6 S1 → M261 A109 B1 S2。只切换 MUX/读传感器，不开泵阀。固件 MUX 写失败只告警，读数异常时请重复读取并核对。</div>
       </div>
 
-      <div class="card">
+      <div class="card lumen-outputs">
         <h3>泵阀输出</h3>
         <div class="sub">P0=Left_V / P1=Left_P / P2=Right_V / P3=Right_P；每次切换都会确认。</div>
         <table><thead><tr><th>输出</th><th>开</th><th>关</th></tr></thead><tbody>
@@ -199,23 +199,43 @@
         </tbody></table>
       </div>
 
-      <div class="card">
+      <div class="card lumen-led">
         <h3>LED 灯光</h3>
         <div class="row"><button onclick="setLumenLed('off')">关</button><button onclick="setLumenLed('white')">白</button><button onclick="setLumenLed('red')">红</button><button onclick="setLumenLed('green')">绿</button><button onclick="setLumenLed('blue')">蓝</button></div>
         <div class="sub">M150；灯光只影响 WS2812，不控制泵阀。</div>
       </div>
 
-      <div class="card">
-        <h3>Z / A / B 点动</h3>
+      <div class="card lumen-jog">
+        <h3>运动测试 / Jog</h3>
         <div class="row">
-          <label>轴</label><select id="lumenJogAxis"><option>Z</option><option>A</option><option>B</option></select>
+          <button onclick="lumenMotion('?')">状态 ?</button>
+          <button onclick="lumenMotion('M114')">位置 M114</button>
+          <button class="warn" onclick="lumenMotion('$X')">解锁 $X</button>
+          <button onclick="lumenMotion('$ME')">使能 $ME</button>
+          <button class="danger" onclick="lumenMotion('$MD')">失能 $MD</button>
+        </div>
+        <div class="row">
+          <label>轴</label><select id="lumenJogAxis"><option>Z</option><option>X</option><option>Y</option><option>A</option><option>B</option></select>
           <label>距离/角度</label><input id="lumenJogAmount" value="1" style="width:80px">
           <label>进给</label><input id="lumenJogFeed" value="1000" style="width:90px">
         </div>
-        <div class="row"><button class="primary" onclick="lumenJog(1)">正向</button><button onclick="lumenJog(-1)">反向</button><span class="sub" style="margin:0">相对 $J；需确认</span></div>
+        <div class="row"><button class="primary" onclick="lumenJog(1)">正向</button><button onclick="lumenJog(-1)">反向</button><span class="sub" style="margin:0">相对 $J；动作需确认</span></div>
+        <div class="sub">轴来自 config.yaml；$X 可解锁 Alarm，$MD 会失能电机。</div>
       </div>
 
-      <div class="card">
+      <div class="card lumen-g28">
+        <h3>G28 回零测试（固件 can-v0.2.36+）</h3>
+        <div class="sub">动作测试，会移动 X/Y/Z；每次点击都需要确认。不会自动执行。</div>
+        <div class="row">
+          <button class="danger" onclick="lumenG28('')">G28 全部</button>
+          <button onclick="lumenG28('X')">G28 X</button>
+          <button onclick="lumenG28('Y')">G28 Y</button>
+          <button onclick="lumenG28('Z')">G28 Z</button>
+        </div>
+        <div class="sub">固件按 LumenPnP 兼容层执行；config.yaml 必须包含 lumen: 段；Z 回零后会按 Z_AFTER_HOMING 配置移动。</div>
+      </div>
+
+      <div class="card lumen-log">
         <h3>命令输出</h3>
         <pre id="lumenOut">--</pre>
       </div>

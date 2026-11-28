@@ -10,7 +10,7 @@ import { resolveConnectTarget, scanMessage, scannedAddress } from "./core/sessio
 import { parseConfigMap } from "./core/yconfig.js";
 import { parseDriverLayout } from "./core/drivers.js";
 import { readLimitsOnce, stopLimitTest, toggleLimitTest } from "./views/limits.js";
-import { clearLumenOut, initLumen, lumenJog, readVacuum, runLumenReadOnlyTests, setLumenLed, setLumenOutput } from "./views/lumen.js";
+import { clearLumenOut, initLumen, lumenG28, lumenJog, lumenMotion, readVacuum, runLumenReadOnlyTests, setLumenLed, setLumenOutput } from "./views/lumen.js";
 import { initDirectionControls, stopDirectionJog } from "./views/dpad.js";
 
 const $ = (id) => document.getElementById(id);
@@ -57,6 +57,7 @@ function resetDeviceState() {
     firmwareDrivers: "",
     firmwareError: "",
     driverLayout: null,
+    lumenConfigured: false,
     drivers: [],
   });
   resetConfigState();
@@ -137,8 +138,12 @@ async function loadDriverLayout() {
   try {
     const j = await transport.getDeviceConfig();
     if (currentTransportKey() !== expected) return null;
-    const layout = parseDriverLayout(parseConfigMap(j.yaml));
-    patch({ driverLayout: layout });
+    const configMap = parseConfigMap(j.yaml);
+    const layout = parseDriverLayout(configMap);
+    patch({
+      driverLayout: layout,
+      lumenConfigured: Boolean(configMap && configMap.lumen && typeof configMap.lumen === "object"),
+    });
     applyAxisOptions(layout);
     const addressText = layout.addressList.length ? layout.addressList.join(",") : "无";
     log(
@@ -149,7 +154,7 @@ async function loadDriverLayout() {
     return layout;
   } catch (e) {
     if (currentTransportKey() !== expected) return null;
-    patch({ driverLayout: null });
+    patch({ driverLayout: null, lumenConfigured: false });
     log("读取 config.yaml 失败: " + e, "err");
     return null;
   }
@@ -597,6 +602,8 @@ Object.assign(window, {
   setLumenOutput: (p, on) => run("lumen", () => setLumenOutput(p, on)),
   setLumenLed: (preset) => run("lumen", () => setLumenLed(preset)),
   lumenJog: (sign) => run("lumen", () => lumenJog(sign)),
+  lumenG28: (axes) => run("lumen", () => lumenG28(axes)),
+  lumenMotion: (command) => run("lumen", () => lumenMotion(command)),
   loadConfig: () => run("config", loadConfig),
   saveConfig: () => run("config", saveConfig),
   loadCanConfig: () => run("can", loadCanConfig),
