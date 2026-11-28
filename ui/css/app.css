@@ -51,7 +51,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
 #dpadFeedValue{display:inline-block;min-width:92px;font-variant-numeric:tabular-nums}
 
 /* Mobile / Android landscape.  Keep the desktop layout above 600px tall. */
-@media (orientation: landscape) and (max-height: 600px) {
+@media (orientation: landscape) and (max-height: 600px) and (max-width: 1100px) {
   body { font-size: 12px; }
   header {
     flex-wrap: nowrap;
@@ -155,11 +155,11 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
 /* Foldables: CSS viewport segments are available on Chromium-based Android
    WebView when the device exposes a hinge.  Keep the two-pane control layout
    and never place touch controls across the hinge center. */
-@media (orientation: landscape) and (max-height: 650px) and (horizontal-viewport-segments: 2) {
+@media (orientation: landscape) and (max-height: 650px) and (max-width: 1100px) and (horizontal-viewport-segments: 2) {
   #view-control.active { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 28px; }
   .dpad-layout { justify-content: flex-start; }
 }
-@media (orientation: landscape) and (max-height: 650px) {
+@media (orientation: landscape) and (max-height: 650px) and (max-width: 1100px) {
   main { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
 }
 /* Lumen compatibility / actuator view */
@@ -168,7 +168,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
 #lumenOut{max-height:220px;overflow:auto;margin-top:4px}
 #lumenTestRows .lumen-result{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lumen-grid button.danger{background:#3a1d23;border-color:#69313a;color:#ffb7bd}
-@media (orientation: landscape) and (max-height: 600px) {
+@media (orientation: landscape) and (max-height: 600px) and (max-width: 1100px) {
   .lumen-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
   .lumen-grid .card { padding: 7px; }
   .lumen-grid .sub { font-size: 9px; }
@@ -260,6 +260,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
    Goal: readable text, no clipped groups, no horizontal page overflow.
    ===================================================================== */
 .hdr-conn, .hdr-scan, .hdr-serial { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.hdr-status { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 .hdr-conn .tag, .hdr-scan .tag, .hdr-serial .tag { margin-left: 0; }
 
 @media (orientation: portrait) and (max-width: 900px) {
@@ -268,7 +269,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
-      "brand conn"
+      "brand status"
       "connect connect"
       "scan scan";
     gap: 6px 8px;
@@ -283,8 +284,10 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
   .hdr-scan { grid-area: scan; display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
   .hdr-scan #scanResults { flex: 1 1 150px; width: auto !important; min-width: 0; }
   .hdr-scan #scanMsg { flex: 0 0 auto; }
-  #connPill { grid-area: conn; justify-self: end; align-self: center; font-size: 11px; padding: 4px 8px; }
+  .hdr-status { grid-area: status; justify-self: end; align-self: center; gap: 6px; margin-left: 0; }
+  #connPill { font-size: 11px; padding: 4px 8px; }
   .hdr-serial, #appVersion, #clock, .grow, .hdr-conn .tag, .hdr-scan .tag { display: none; }
+  .hdr-status { display: flex; align-items: center; margin-left: auto; }
   header input, header select, header button {
     font-size: 13px;
     padding: 8px 10px;
@@ -358,7 +361,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
   #lumenTestRows .lumen-result { white-space: normal; overflow-wrap: anywhere; }
 }
 
-@media (orientation: landscape) and (max-height: 600px) {
+@media (orientation: landscape) and (max-height: 600px) and (max-width: 1100px) {
   body { font-size: 13px; }
   header {
     display: flex;
@@ -373,6 +376,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
   .hdr-conn input#deviceUrl { width: 150px !important; }
   .hdr-scan select#scanResults { width: 150px !important; }
   .hdr-serial, #appVersion, #clock, .grow, .hdr-conn .tag, .hdr-scan .tag { display: none; }
+  .hdr-status { display: flex; align-items: center; gap: 6px; margin-left: auto; }
   #connPill { font-size: 11px; padding: 3px 8px; }
   header input, header select, header button { font-size: 13px; padding: 7px 9px; min-height: 42px; flex: 0 0 auto; white-space: nowrap; }
   header #scanMsg, header #connPill { font-size: 12px; padding: 4px 8px; }

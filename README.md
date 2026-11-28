@@ -6,7 +6,7 @@ Rust + Tauri 的 FluidNC CAN 调试、控制、配置与固件安装工具，面
 
 ![桌面 GUI](docs/gui.png)
 
-当前版本：`studio-v0.8.2`
+当前版本：`studio-v0.8.3`
 
 ## 功能
 
@@ -177,8 +177,8 @@ dist/FluidCAN-Studio-android-arm64.apk
 触发：
 
 ```powershell
-git tag studio-v0.8.2
-git push origin studio-v0.8.2
+git tag studio-v0.8.3
+git push origin studio-v0.8.3
 ```
 
 依赖的 Actions 使用当前最新大版本，包括：

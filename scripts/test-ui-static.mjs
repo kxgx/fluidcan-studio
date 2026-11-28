@@ -297,6 +297,8 @@ console.log("static UI tests: PASS");
   assert.ok(css.includes("@media (orientation: portrait) and (max-width: 900px)"), "portrait CSS missing");
   const html = fs.readFileSync(path.join(root, "ui/index.html"), "utf8");
   assert.ok(html.includes("control-main") && html.includes("control-dpad"), "control cards need mobile classes");
+  assert.ok(html.includes('class="hdr-status"'), "header status group missing");
+  assert.ok(css.includes("and (max-width: 1100px)"), "mobile landscape width guard missing");
 }
 
 // Lumen compatibility view must stay wired.

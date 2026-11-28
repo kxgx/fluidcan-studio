@@ -20,6 +20,11 @@
     <select id="scanResults" style="width:260px" title="选择扫描结果"><option value="">扫描结果</option></select>
     <span id="scanMsg" class="pill">未扫描</span>
   </div>
+  <div class="hdr-status">
+    <span id="connPill" class="pill">未连接</span>
+    <span id="appVersion" class="pill" title="Studio 版本">--</span>
+    <span id="clock" class="pill"></span>
+  </div>
   <div class="hdr-serial">
     <span class="tag">串口</span>
     <select id="serialPorts" style="width:150px" title="独立串口链路"><option value="">串口...</option></select>
@@ -27,10 +32,6 @@
     <button id="openSerialBtn" onclick="openSerial()" title="打开串口">打开串口</button>
     <button onclick="closeSerial()" title="关闭串口并释放 COM 口">关闭串口</button>
   </div>
-  <span id="connPill" class="pill">未连接</span>
-  <span class="grow"></span>
-  <span id="appVersion" class="pill" title="Studio 版本">--</span>
-  <span id="clock" class="pill"></span>
 </header>
 <div class="layout">
 <nav>
