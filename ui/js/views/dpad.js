@@ -28,6 +28,7 @@ import { getStatus, httpGet, httpPost, jogStart, jogStop } from "../core/transpo
 import { nativeGamepads, startNativeGamepadSource } from "../core/gamepad-source.js";
 
 const GAMEPAD_POLL_MS = 80;
+const SOFT_MARGIN_MM = 0.001;
 
 const $ = (id) => document.getElementById(id);
 
@@ -186,8 +187,8 @@ function continuousStep(vector, feed, mpos = "--") {
     }
     const target = sign > 0 ? upper : lower;
     const available = sign > 0 ? target - pos : pos - target;
-    if (available > 0.05) {
-      distances.push(available - 0.05);
+    if (available > SOFT_MARGIN_MM) {
+      distances.push(available - SOFT_MARGIN_MM);
       filtered[axis] = sign;
     }
   }
@@ -198,6 +199,26 @@ function continuousStep(vector, feed, mpos = "--") {
     command: vectorToJog(filtered, Number(distance.toFixed(3)), feed),
     durationMs,
   };
+}
+
+// Describe why a jog request produced no movement.  Prefer naming the axis,
+// direction and configured bound instead of the old generic message.
+function boundaryMessage(vector, mpos = "--") {
+  const hits = [];
+  for (const axis of ["X", "Y", "Z"]) {
+    const sign = vector[axis];
+    if (!sign) continue;
+    const soft = state.driverLayout?.axisSoft?.[axis] || {};
+    if (!Number.isFinite(Number(soft.max)) || !Number.isFinite(Number(soft.min))) continue;
+    const pos = mposValue(mpos, axis);
+    if (pos == null) continue;
+    const target = sign > 0 ? Number(soft.max) : Number(soft.min);
+    const available = sign > 0 ? target - pos : pos - target;
+    if (available <= SOFT_MARGIN_MM) {
+      hits.push(`${axis}${sign > 0 ? "+" : "-"} 已到${sign > 0 ? "上限" : "下限"} ${target.toFixed(3)}`);
+    }
+  }
+  return hits.length ? hits.join("，") : "已到软限位/行程边界";
 }
 
 function clearRearm() {
@@ -284,6 +305,7 @@ async function doStartContinuous(vector, source, feed, rearm = false) {
     return;
   }
   let step = continuousStep(vector, feed, "--");
+  let snapshotMpos = "--";
   if (active) {
     const stopped = await doStopContinuous("切换方向或输入源");
     if (!stopped) return;
@@ -315,6 +337,7 @@ async function doStartContinuous(vector, source, feed, rearm = false) {
         return;
       }
       step = continuousStep(vector, feed, snapshot.mpos);
+      snapshotMpos = snapshot.mpos;
       if (revision !== inputRevision) {
         active = null;
         return;
@@ -322,7 +345,7 @@ async function doStartContinuous(vector, source, feed, rearm = false) {
     }
     if (!step.command) {
       active = null;
-      status("已到软限位/行程边界", "warn2");
+      status(boundaryMessage(vector, snapshotMpos), "warn2");
       return;
     }
     if (stopRequested) {

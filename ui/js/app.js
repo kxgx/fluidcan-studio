@@ -429,7 +429,9 @@ async function refreshAll() {
   try {
     const started = Date.now();
     await refreshStatus();
-    if (!state.driverLayout) void loadDriverLayout();
+    // Always reload config.yaml: soft limits and axis ranges may have been
+    // changed on the device without reconnecting.
+    await loadDriverLayout();
     setLinkPillFromTransport();
     log(`状态已刷新（${((Date.now() - started) / 1000).toFixed(1)}s），CAN 数据后台读取中`, "ok");
     refreshCanInBackground("刷新").finally(() => void refreshFirmwareInBackground(true));

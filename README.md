@@ -6,7 +6,7 @@ Rust + Tauri 的 FluidNC CAN 调试、控制、配置与固件安装工具，面
 
 ![桌面 GUI](docs/gui.png)
 
-当前版本：`studio-v0.6.0`
+当前版本：`studio-v0.6.1`
 
 ## 功能
 
@@ -175,8 +175,8 @@ dist/FluidCAN-Studio-android-arm64.apk
 触发：
 
 ```powershell
-git tag studio-v0.6.0
-git push origin studio-v0.6.0
+git tag studio-v0.6.1
+git push origin studio-v0.6.1
 ```
 
 依赖的 Actions 使用当前最新大版本，包括：
@@ -245,7 +245,7 @@ Android 是独立构建版本，复用同一套 Rust 后端、网页 UI 和内�
 - Android 上启动内置 `127.0.0.1` Axum 服务，WebView 加载同一 UI
 - Android 物理手柄：原生 InputDevice 桥接，尚未在真实手柄/真机上验证，当前 README 的实测清单不包含手柄桥
 
-已在 Xiaomi `25098PN5AC` / HyperOS `OS4.0.6.0.XBLCNXM`（Android 17 / SDK 37）实测：
+已在 Xiaomi `25098PN5AC` / HyperOS `OS4.0.6.1.XBLCNXM`（Android 17 / SDK 37）实测：
 
 - APK 安装、启动成功
 - 启动后自动扫描局域网并发现控制器
