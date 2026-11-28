@@ -25,8 +25,9 @@ assert.equal(clampFeed(4000, 3000), 3000);
 assert.equal(clampFeed(4000, 6000), 4000);
 assert.equal(clampFeed(9000, 6000), 6000);
 assert.equal(clampFeed(4000, 1000), 1000);
-assert.equal(clampFeed(50, 3000), 100);
+assert.equal(clampFeed(50, 3000), 50);
 assert.equal(clampFeed("bad", 3000), 500);
+assert.equal(clampFeed(50, 60), 50);
 
 assert.equal(directionToJog("XY", "left", 1, 500), "$J=G21G91X-1F500");
 assert.equal(directionToJog("XY", "right", 2, 600), "$J=G21G91X2F600");

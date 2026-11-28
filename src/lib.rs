@@ -36,8 +36,7 @@ const ANDROID_GAMEPAD_PORT: u16 = 18088;
 // The UI derives the real ceiling from the device's axis max_rate; this is
 // only the persistence/API bound so a config-derived value above the old
 // hard-coded 3000 can be stored.
-const JOG_MAX_FEED_MIN: u16 = 100;
-const JOG_MAX_FEED_MAX: u16 = 60_000;
+const JOG_MAX_FEED_MIN: u32 = 1;
 const GITHUB_REPO: &str = "kxgx/FluidNC";
 const GITHUB_API: &str = "https://api.github.com";
 
@@ -116,7 +115,7 @@ struct AppState {
     // succeeds, otherwise a "not connected" UI could still issue commands to a
     // remembered machine.
     saved_base: Arc<tokio::sync::RwLock<String>>,
-    jog_max_feed: Arc<tokio::sync::RwLock<u16>>,
+    jog_max_feed: Arc<tokio::sync::RwLock<u32>>,
     serial: Arc<Mutex<SerialState>>,
     serial_log: Arc<Mutex<Vec<String>>>,
     serial_reader: Arc<Mutex<Option<SerialReader>>>,
@@ -318,19 +317,22 @@ fn settings_file() -> Option<PathBuf> {
     last_device_file().and_then(|p| p.parent().map(|parent| parent.join("ui-settings.yaml")))
 }
 
-fn load_jog_max_feed() -> u16 {
+fn load_jog_max_feed() -> u32 {
     settings_file()
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|text| {
+            // A settings file is only written when the operator changes the
+            // ceiling, so legacy files remain explicit user choices.  No file
+            // at all means "unset" and the UI uses the firmware axis limit.
             text.lines()
                 .find_map(|line| line.trim().strip_prefix("jog_max_feed:"))
-                .and_then(|value| value.trim().parse::<u16>().ok())
+                .and_then(|value| value.trim().parse::<u32>().ok())
         })
-        .map(|value| value.clamp(JOG_MAX_FEED_MIN, JOG_MAX_FEED_MAX))
-        .unwrap_or(3000)
+        .filter(|value| *value >= JOG_MAX_FEED_MIN)
+        .unwrap_or(0)
 }
 
-fn save_jog_max_feed(value: u16) {
+fn save_jog_max_feed(value: u32) {
     let Some(path) = settings_file() else {
         return;
     };
@@ -341,7 +343,7 @@ fn save_jog_max_feed(value: u16) {
         path,
         format!(
             "jog_max_feed: {}\n",
-            value.clamp(JOG_MAX_FEED_MIN, JOG_MAX_FEED_MAX)
+            value
         ),
     );
 }
@@ -361,7 +363,7 @@ async fn install_toolchain(State(st): State<Arc<AppState>>) -> Result<Json<Value
 
 #[derive(Deserialize)]
 struct UiSettingsReq {
-    jog_max_feed: u16,
+    jog_max_feed: u32,
 }
 
 async fn get_settings(State(st): State<Arc<AppState>>) -> Json<Value> {
@@ -369,8 +371,8 @@ async fn get_settings(State(st): State<Arc<AppState>>) -> Json<Value> {
 }
 
 async fn set_settings(State(st): State<Arc<AppState>>, Json(req): Json<UiSettingsReq>) -> Json<Value> {
-    if !(JOG_MAX_FEED_MIN..=JOG_MAX_FEED_MAX).contains(&req.jog_max_feed) {
-        return Json(json!({"error": format!("jog_max_feed must be {JOG_MAX_FEED_MIN}..{JOG_MAX_FEED_MAX}")}));
+    if req.jog_max_feed < JOG_MAX_FEED_MIN {
+        return Json(json!({"error": format!("jog_max_feed must be at least {JOG_MAX_FEED_MIN}")}));
     }
     *st.jog_max_feed.write().await = req.jog_max_feed;
     save_jog_max_feed(req.jog_max_feed);

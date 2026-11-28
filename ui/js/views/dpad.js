@@ -74,9 +74,13 @@ function status(text, kind = "") {
 
 function configMaxFeed() {
   // One speed slider feeds combined X/Y/Z motion; use the most restrictive of
-  // the three axes.  Missing max_rate falls back to FluidNC's 1000 mm/min.
+  // the three axes.  The value comes from the device's config.yaml.  The
+  // 1000 fallback is used only before the layout has been loaded.
+  // Axis.h defaults _maxRate to 1000 mm/min when config omits max_rate.
+  // maxFeedForAxes skips axes that do not exist in the loaded layout, so this
+  // fallback only applies to axes that exist but omit an explicit limit.
   const max = maxFeedForAxes(state.driverLayout, ["X", "Y", "Z"], 1000);
-  return Number.isFinite(max) && max > 0 ? max : 3000;
+  return Number.isFinite(max) && max > 0 ? max : 1000;
 }
 
 // rawMaxFeed is the operator's saved ceiling; currentMaxFeed is what the
@@ -85,11 +89,13 @@ function configMaxFeed() {
 // user returns to XY or after a restart.
 function setRawMaxFeed(value) {
   const raw = Number(value);
-  if (Number.isFinite(raw) && raw > 0) rawMaxFeed = Math.min(60000, Math.max(100, raw));
+  if (Number.isFinite(raw) && raw > 0) rawMaxFeed = Math.max(1, raw);
 }
 
 function rawCeiling() {
-  return Number.isFinite(rawMaxFeed) && rawMaxFeed > 0 ? rawMaxFeed : 3000;
+  // Until the operator explicitly sets a ceiling, use the firmware config's
+  // axis limit instead of a hard-coded 3000.
+  return Number.isFinite(rawMaxFeed) && rawMaxFeed > 0 ? rawMaxFeed : configMaxFeed();
 }
 
 function currentMaxFeed() {

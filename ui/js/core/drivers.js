@@ -190,9 +190,14 @@ export function axisMaxFeed(axisNode) {
 
 export function maxFeedForAxes(layout, axes, missingAxisDefault = null) {
   const limits = [];
+  const loaded = Boolean(layout && Array.isArray(layout.axes) && layout.axes.length);
+  const present = loaded ? new Set(layout.axes.map((axis) => String(axis).toUpperCase())) : null;
   let missing = false;
   for (const axis of Array.isArray(axes) ? axes : []) {
-    const value = layout && layout.axisLimits ? Number(layout.axisLimits[String(axis).toUpperCase()]) : NaN;
+    const key = String(axis).toUpperCase();
+    // An axis that is not part of the loaded layout cannot constrain a jog.
+    if (present && !present.has(key)) continue;
+    const value = layout && layout.axisLimits ? Number(layout.axisLimits[key]) : NaN;
     if (Number.isFinite(value) && value > 0) limits.push(value);
     else missing = true;
   }

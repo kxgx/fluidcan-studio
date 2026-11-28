@@ -23,12 +23,14 @@ export function normalizePlane(value) {
 // UI-side safety cap.  The firmware axis max_rate remains the hard limit; this
 // only prevents a stored/typed jog value from exceeding the operator's chosen
 // software ceiling.
-export function clampFeed(value, max = 3000) {
-  // No fixed 3000 cap: the ceiling comes from config.yaml via the caller.
-  const ceiling = Number.isFinite(Number(max)) ? Math.max(100, Number(max)) : 3000;
+export function clampFeed(value, max = Infinity) {
+  // The ceiling comes from config.yaml via the caller.  If it is unknown,
+  // do not invent a fixed speed cap; only enforce a positive rate.
+  const requested = Number(max);
+  const ceiling = Number.isFinite(requested) && requested > 0 ? Math.max(1, requested) : Infinity;
   const feed = Number(value);
   if (!Number.isFinite(feed) || feed <= 0) return 500;
-  return Math.min(ceiling, Math.max(100, feed));
+  return Math.min(ceiling, Math.max(1, feed));
 }
 
 export function directionToJog(plane, direction, distance = 1, feed = 500) {
