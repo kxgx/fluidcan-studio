@@ -49,3 +49,117 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
 .dpad,.dpad-btn,.dpad-z button{touch-action:none}
 
 #dpadFeedValue{display:inline-block;min-width:92px;font-variant-numeric:tabular-nums}
+
+/* Mobile / Android landscape.  Keep the desktop layout above 600px tall. */
+@media (orientation: landscape) and (max-height: 600px) {
+  body { font-size: 12px; }
+  header {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 4px;
+    padding: 4px 6px;
+    scrollbar-width: thin;
+  }
+  header .brand { font-size: 14px; margin-right: 2px; white-space: nowrap; }
+  header .tag, #clock, #appVersion, #serialPorts, #openSerialBtn { display: none; }
+  header input, header select, header button {
+    padding: 4px 6px;
+    font-size: 11px;
+    border-radius: 6px;
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  header input#deviceUrl { width: 150px !important; }
+  header select#scanResults { width: 150px !important; }
+  header #scanMsg, header #connPill { font-size: 10px; padding: 2px 6px; white-space: nowrap; }
+  .layout { flex-direction: row; }
+  nav {
+    width: 82px;
+    flex: 0 0 82px;
+    padding: 4px;
+    border-right: 1px solid var(--line);
+    border-bottom: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  nav button {
+    width: 100%;
+    margin: 2px 0;
+    padding: 7px 3px;
+    font-size: 11px;
+    text-align: center;
+    white-space: nowrap;
+  }
+  main { padding: 6px 8px; }
+  h1 { font-size: 15px; margin: 0 0 2px; }
+  h2 { font-size: 13px; margin: 8px 0 4px; }
+  .sub { font-size: 10px; margin-bottom: 6px; }
+  .card { padding: 8px; border-radius: 8px; }
+  .card h3 { font-size: 10px; margin-bottom: 5px; }
+  .row { gap: 5px; margin: 5px 0; }
+  .row label { font-size: 10px; }
+  button, input, select { padding: 5px 7px; font-size: 11px; }
+  .pill { font-size: 10px; padding: 2px 7px; }
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .split { grid-template-columns: 1fr; gap: 6px; }
+  pre { max-height: 150px; padding: 6px; font-size: 10px; }
+  textarea.code { min-height: 220px; padding: 8px; font-size: 11px; }
+  table { font-size: 11px; }
+  th, td { padding: 4px 5px; }
+  .dpad-fieldset { padding: 6px; margin: 6px 0 2px; }
+  .dpad-layout { gap: 10px; flex-wrap: nowrap; justify-content: flex-start; }
+  .dpad { width: 126px; height: 126px; flex: 0 0 126px; gap: 3px; }
+  .dpad-btn { font-size: 16px; }
+  .virtual-stick { width: 106px; height: 106px; }
+  .stick-knob { width: 36px; height: 36px; margin: -18px 0 0 -18px; }
+  .dpad-z button { min-width: 88px; padding: 7px 8px; font-size: 12px; }
+  #dpadFeedValue { min-width: 70px; font-size: 10px; }
+
+  .control-dpad .sub { display: none; }
+  .control-dpad .dpad-wasd,
+  .control-dpad .dpad-upper { display: none; }
+  .control-dpad .row { gap: 4px; margin: 3px 0; flex-wrap: wrap; }
+  .control-dpad #dpadFeed { width: 92px !important; }
+  .control-dpad #dpadFeedValue { min-width: 62px; }
+  .control-dpad .dpad-fieldset { margin-top: 2px; }
+
+  #view-control.active {
+    display: grid;
+    grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr);
+    gap: 8px;
+    align-items: start;
+  }
+  #view-control.active > h1,
+  #view-control.active > .sub,
+  #view-control.active > .control-limits,
+  #view-control.active > h2,
+  #view-control.active > pre { grid-column: 1 / -1; }
+  #view-control.active > h1 { grid-row: 1; }
+  #view-control.active > .sub { grid-row: 2; }
+  #view-control.active > .control-main { grid-column: 1; grid-row: 3; }
+  #view-control.active > .control-dpad { grid-column: 2; grid-row: 3; }
+  #view-control.active > .control-limits { grid-row: 4; }
+  #view-control.active > h2 { grid-row: 5; }
+  #view-control.active > pre { grid-row: 6; }
+}
+/* Narrow landscape phones: the 126px D-pad + stick + Z buttons do not fit
+   in the right column, so keep D-pad/Z and hide the optional virtual stick. */
+@media (orientation: landscape) and (max-height: 600px) and (max-width: 900px) {
+  .dpad-layout { flex-wrap: nowrap; justify-content: center; gap: 6px; }
+  .dpad { width: 120px; height: 120px; flex: 0 0 120px; }
+  .stick-wrap { display: none; }
+  .dpad-z button { min-width: 76px; padding: 6px; font-size: 11px; }
+  #view-control.active { grid-template-columns: minmax(0, 1.12fr) minmax(0, .88fr); gap: 6px; }
+}
+/* Foldables: CSS viewport segments are available on Chromium-based Android
+   WebView when the device exposes a hinge.  Keep the two-pane control layout
+   and never place touch controls across the hinge center. */
+@media (orientation: landscape) and (max-height: 650px) and (horizontal-viewport-segments: 2) {
+  #view-control.active { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 28px; }
+  .dpad-layout { justify-content: flex-start; }
+}
+@media (orientation: landscape) and (max-height: 650px) {
+  main { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+}
+

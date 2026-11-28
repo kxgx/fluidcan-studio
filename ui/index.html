@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>FluidCAN Studio</title>
 <link rel="stylesheet" href="/css/app.css">
 </head>
@@ -83,7 +83,7 @@
 
   <section id="view-control" class="view">
     <h1>运动控制</h1><div class="sub">点动、回零、解锁</div>
-    <div class="card">
+    <div class="card control-main">
       <div class="row">
         <label>坐标清零</label>
         <button onclick="zeroAxis('X')">X 清零</button>
@@ -115,14 +115,14 @@
       </div>
       <div class="row"><label>任意命令</label><input id="quickCmd" style="flex:1" placeholder="$J=G91X1F500、$H、$X ..."><button onclick="sendQuick()">发送</button></div>
     </div>
-    <div class="card">
+    <div class="card control-dpad">
       <h3>方向键 / 手柄</h3>
       <div class="sub">按住连续移动，松开停止；不会回零或使能。</div>
       <div class="row">
-        <label><input type="checkbox" id="dpadEnable"> 启用方向控制</label>
-        <label><input type="checkbox" id="dpadWasd"> WASD</label>
-        <label>速度 <input type="range" id="dpadFeed" min="1" step="50" value="500" style="width:150px;vertical-align:middle"> <span id="dpadFeedValue" class="mono">500 mm/min</span></label>
-      <label>上限 <input id="dpadMaxFeed" type="number" min="1" step="50" value="3000" style="width:90px"> <span class="mono">mm/min</span></label>
+        <label class="dpad-enable"><input type="checkbox" id="dpadEnable"> 启用方向控制</label>
+        <label class="dpad-wasd"><input type="checkbox" id="dpadWasd"> WASD</label>
+        <label class="dpad-speed">速度 <input type="range" id="dpadFeed" min="1" max="100000" step="1" value="500" style="width:150px;vertical-align:middle"> <span id="dpadFeedValue" class="mono">500 mm/min</span></label>
+      <label class="dpad-upper">上限 <input id="dpadMaxFeed" type="number" min="1" step="1" value="3000" style="width:90px"> <span class="mono">mm/min</span></label>
         <span id="dpadStatus" class="pill warn2">方向键未启用</span>
       </div>
       <fieldset id="dpadFieldset" class="dpad-fieldset" disabled>
@@ -148,7 +148,7 @@
       <div id="gamepadStatus" class="sub">手柄：未连接</div>
       <div class="sub">←→ X，↑↓ Y，PageUp/PageDown 或 LB/RB Z；按住任意组合，松开立即停止。</div>
     </div>
-    <div class="card">
+    <div class="card control-limits">
       <h3>限位开关测试（只读，不移动电机）</h3>
       <div class="sub">只读轮询；手动触发限位开关观察状态。</div>
       <div class="row">
