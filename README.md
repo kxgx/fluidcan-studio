@@ -6,7 +6,7 @@ Rust + Tauri 的 FluidNC CAN 调试、控制、配置与固件安装工具，面
 
 ![桌面 GUI](docs/gui.png)
 
-当前版本：`studio-v0.7.0`
+当前版本：`studio-v0.8.0`
 
 ## 功能
 
@@ -19,6 +19,7 @@ Rust + Tauri 的 FluidNC CAN 调试、控制、配置与固件安装工具，面
 - CAN：`$CANStatus`、`$CANFaults`、`$CANPos`、`$CANDriverInfo`、`$CANScan`、`$CANAutoConfig`、`$CANReset`、`$CANLog`
 - CAN 配置面板：只读解析 config.yaml，按 can.driver 和每轴 motorN 的 pd42s1/zdt/canopen 块显示地址、协议字段、方向、速度/加速度/更新周期；警告协议混用、地址重复和方向不一致
 - 运动控制：点动、回零、解锁、使能/失能、工作坐标清零（G10 L20 P1）和驱动零位（$CANZero，按驱动协议清位置基准后自动坐标零）、任意命令；轴列表和 $CANZero 地址由 config.yaml 生成
+- **LumenPnP 页**：只读兼容测试、VAC1/VAC2 M260/M261 真空读取、P0-P3 泵阀确认开关、M150 灯光、Z/A/B 相对点动
 - **移动端横屏**：Android 锁定 sensorLandscape，窄高横屏下顶部/导航紧凑化，运动控制页改为左侧控制、右侧方向键/手柄双栏
 - **方向键 / 手柄连续控制**：默认关闭的虚拟 D-pad、键盘方向键（可选 WASD）、物理手柄和虚拟摇杆；Windows/Linux/macOS 使用 Rust 原生手柄后端，Android 使用原生 InputDevice 桥，浏览器使用 Web Gamepad 回退；←→ X、↑↓ Y、PageUp/PageDown 或 LB/RB Z，支持按住任意多轴组合；按住连续移动、松开立即 JogCancel，速度滑杆上限随 config.yaml 的轴速度上限自动变化
 - **限位开关测试（只读）**：轮询 `?` 状态中的 `Pn:` 触发位，配合 config.yaml 里的 limit_all/neg/pos 引脚显示各轴触发/释放，不会自动移动电机
@@ -176,8 +177,8 @@ dist/FluidCAN-Studio-android-arm64.apk
 触发：
 
 ```powershell
-git tag studio-v0.7.0
-git push origin studio-v0.7.0
+git tag studio-v0.8.0
+git push origin studio-v0.8.0
 ```
 
 依赖的 Actions 使用当前最新大版本，包括：

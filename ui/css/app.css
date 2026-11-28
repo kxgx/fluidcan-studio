@@ -162,4 +162,17 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
 @media (orientation: landscape) and (max-height: 650px) {
   main { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
 }
+/* Lumen compatibility / actuator view */
+.lumen-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;align-items:start}
+.lumen-grid .card{min-width:0}
+#lumenOut{max-height:220px;overflow:auto;margin-top:4px}
+#lumenTestRows .lumen-result{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lumen-grid button.danger{background:#3a1d23;border-color:#69313a;color:#ffb7bd}
+@media (orientation: landscape) and (max-height: 600px) {
+  .lumen-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .lumen-grid .card { padding: 7px; }
+  .lumen-grid .sub { font-size: 9px; }
+  #lumenTestRows .lumen-result { max-width: 180px; }
+  #lumenOut { max-height: 120px; }
+}
 

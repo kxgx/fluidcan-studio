@@ -297,3 +297,17 @@ console.log("static UI tests: PASS");
   const html = fs.readFileSync(path.join(root, "ui/index.html"), "utf8");
   assert.ok(html.includes("control-main") && html.includes("control-dpad"), "control cards need mobile classes");
 }
+
+// Lumen compatibility view must stay wired.
+{
+  const html = fs.readFileSync(path.join(root, "ui/index.html"), "utf8");
+  assert.ok(html.includes('id="view-lumen"'), "Lumen view missing");
+  assert.ok(html.includes('data-view="lumen"'), "Lumen nav missing");
+  for (const id of ["lumenTestRows", "lumenVac1", "lumenVac2", "lumenOut", "lumenJogAxis"]) {
+    assert.ok(html.includes(`id="${id}"`), `Lumen element ${id} missing`);
+  }
+  const app = fs.readFileSync(path.join(root, "ui/js/app.js"), "utf8");
+  assert.ok(app.includes("runLumenReadOnlyTests"), "Lumen app wiring missing");
+  const transport = fs.readFileSync(path.join(root, "ui/js/core/transport.js"), "utf8");
+  assert.ok(transport.includes("execChecked"), "checked command transport missing");
+}

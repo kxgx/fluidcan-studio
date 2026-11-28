@@ -10,6 +10,7 @@ import { resolveConnectTarget, scanMessage, scannedAddress } from "./core/sessio
 import { parseConfigMap } from "./core/yconfig.js";
 import { parseDriverLayout } from "./core/drivers.js";
 import { readLimitsOnce, stopLimitTest, toggleLimitTest } from "./views/limits.js";
+import { clearLumenOut, initLumen, lumenJog, readVacuum, runLumenReadOnlyTests, setLumenLed, setLumenOutput } from "./views/lumen.js";
 import { initDirectionControls, stopDirectionJog } from "./views/dpad.js";
 
 const $ = (id) => document.getElementById(id);
@@ -164,6 +165,7 @@ function showView(name) {
     stopLimitTest();
     stopDirectionJog();
   }
+  if (name === "lumen") initLumen();
 }
 
 // Discovery flow: only fills the scan picker (and the address input when
@@ -496,6 +498,7 @@ async function run(kind, fn) {
 
 async function boot() {
   initDirectionControls();
+  initLumen();
   $("clock").textContent = new Date().toLocaleString();
   setInterval(() => {
     $("clock").textContent = new Date().toLocaleString();
@@ -588,6 +591,12 @@ Object.assign(window, {
   toggleLimitTest: () => run("control", toggleLimitTest),
   readLimitsOnce: () => run("control", readLimitsOnce),
   clearLog,
+  clearLumenOut,
+  runLumenReadOnlyTests: () => run("lumen", runLumenReadOnlyTests),
+  readVacuum: (side) => run("lumen", () => readVacuum(side)),
+  setLumenOutput: (p, on) => run("lumen", () => setLumenOutput(p, on)),
+  setLumenLed: (preset) => run("lumen", () => setLumenLed(preset)),
+  lumenJog: (sign) => run("lumen", () => lumenJog(sign)),
   loadConfig: () => run("config", loadConfig),
   saveConfig: () => run("config", saveConfig),
   loadCanConfig: () => run("can", loadCanConfig),

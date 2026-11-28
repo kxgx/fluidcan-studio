@@ -109,6 +109,18 @@ export async function exec(command) {
   return j.text || "";
 }
 
+// Same as exec(), but turns FluidNC/Marlin `error:`/`ALARM:` replies (and a
+// serial command timeout) into a rejected promise.  The Lumen actuator view
+// must not show a green "done" state for a command the controller rejected.
+export async function execChecked(command) {
+  const j = await execRaw(command);
+  const text = String(j.text || "");
+  if (j.ok === false || /(^|\n)\s*(?:error:|ALARM:)/i.test(text)) {
+    throw new Error(text.trim() || "设备命令失败");
+  }
+  return text;
+}
+
 // Uniform status snapshot for the overview.
 export async function getStatus() {
   if (mode === "serial") {
