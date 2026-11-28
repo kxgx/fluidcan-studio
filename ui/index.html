@@ -9,18 +9,24 @@
 <body>
 <header>
   <div class="brand">Fluid<b>CAN</b> Studio</div>
-  <span class="tag" style="margin-left:0">WiFi</span>
-  <input id="deviceUrl" placeholder="设备地址" style="width:230px" title="FluidNC 设备地址">
-  <button class="primary" id="connectBtn" onclick="connectDevice()" title="连接设备">连接</button>
-  <span class="tag" style="margin-left:16px">扫描</span>
-  <button id="scanBtn" onclick="scanDevices()" title="扫描局域网设备">扫描设备</button>
-  <select id="scanResults" style="width:260px" title="选择扫描结果"><option value="">扫描结果</option></select>
-  <span id="scanMsg" class="pill">未扫描</span>
-  <span class="tag" style="margin-left:16px">串口</span>
-  <select id="serialPorts" style="width:150px" title="独立串口链路"><option value="">串口...</option></select>
-  <button onclick="refreshPorts()">刷新</button>
-  <button id="openSerialBtn" onclick="openSerial()" title="打开串口">打开串口</button>
-  <button onclick="closeSerial()" title="关闭串口并释放 COM 口">关闭串口</button>
+  <div class="hdr-conn">
+    <span class="tag">WiFi</span>
+    <input id="deviceUrl" placeholder="设备地址" style="width:230px" title="FluidNC 设备地址">
+    <button class="primary" id="connectBtn" onclick="connectDevice()" title="连接设备">连接</button>
+  </div>
+  <div class="hdr-scan">
+    <span class="tag">扫描</span>
+    <button id="scanBtn" onclick="scanDevices()" title="扫描局域网设备">扫描设备</button>
+    <select id="scanResults" style="width:260px" title="选择扫描结果"><option value="">扫描结果</option></select>
+    <span id="scanMsg" class="pill">未扫描</span>
+  </div>
+  <div class="hdr-serial">
+    <span class="tag">串口</span>
+    <select id="serialPorts" style="width:150px" title="独立串口链路"><option value="">串口...</option></select>
+    <button onclick="refreshPorts()">刷新</button>
+    <button id="openSerialBtn" onclick="openSerial()" title="打开串口">打开串口</button>
+    <button onclick="closeSerial()" title="关闭串口并释放 COM 口">关闭串口</button>
+  </div>
   <span id="connPill" class="pill">未连接</span>
   <span class="grow"></span>
   <span id="appVersion" class="pill" title="Studio 版本">--</span>
@@ -170,7 +176,8 @@
       <div class="card">
         <h3>只读兼容测试</h3>
         <div class="row"><button class="primary" id="lumenTestBtn" onclick="runLumenReadOnlyTests()">运行只读测试</button><span class="sub" style="margin:0">不启动运动或输出</span></div>
-        <table><thead><tr><th>测试</th><th>命令</th><th>状态</th><th>返回</th></tr></thead><tbody id="lumenTestRows"><tr><td colspan="4" class="muted">点击运行，顺序发送 $I / ? / M114 / M115 / $CANStatus / $CANPos</td></tr></tbody></table>
+        <div class="sub" style="margin-top:6px">顺序发送 $I / ? / M114 / M115 / $CANStatus / $CANPos</div>
+        <table><thead><tr><th>测试</th><th>命令</th><th>状态</th><th>返回</th></tr></thead><tbody id="lumenTestRows"><tr><td colspan="4" class="muted">点击“运行只读测试”开始</td></tr></tbody></table>
       </div>
 
       <div class="card">
